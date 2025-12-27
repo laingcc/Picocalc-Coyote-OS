@@ -12,35 +12,6 @@
 
 const uint LEDPIN = 25;
 
-
-void test_battery(){
-    char buf[64];
-    int bat_pcnt = read_battery();
-    bat_pcnt = bat_pcnt>>8;
-    int bat_charging = bitRead(bat_pcnt,7);
-    bitClear(bat_pcnt,7);
-    sprintf(buf,"battery percent is %d\n",bat_pcnt);
-    printf("%s", buf);
-    lcd_print_string(buf);
-    if(bat_charging ==0 ){
-        sprintf(buf,"battery is not charging\n");
-    }else{
-        sprintf(buf,"battery is charging\n");
-    }
-    printf("%s", buf);
-    lcd_print_string(buf);
-}
-
-void test_kbd_backlight(uint8_t val) {
-    char buf[64];
-    int kbd_backlight = set_kbd_backlight(val);
-    kbd_backlight = kbd_backlight>>8;
-
-    sprintf(buf, "kbd backlight %d\n", kbd_backlight);
-    printf("%s", buf);
-    lcd_print_string(buf);
-}
-
 void updateOverlay() {
     char buf[64];
     int bat = read_battery();
