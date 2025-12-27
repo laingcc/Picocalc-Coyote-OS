@@ -63,6 +63,14 @@ void set_font() {
     s_width = hres / gui_font_width;
 }
 
+void set_current_y(int y) {
+    current_y = y;
+}
+
+void set_current_x(int x) {
+    current_x = x;
+}
+
 void define_region_spi(int xstart, int ystart, int xend, int yend, int rw) {
     unsigned char coord[4];
     lcd_spi_lower_cs();
@@ -183,12 +191,6 @@ void draw_buffer_spi(int x1, int y1, int x2, int y2, unsigned char *p) {
 
 }
 
-//Print the bitmap of a char on the video output
-//    x, y - the top left of the char
-//    width, height - size of the char's bitmap
-//    scale - how much to scale the bitmap
-//	  fc, bc - foreground and background colour
-//    bitmap - pointer to the bitmap
 void draw_bitmap_spi(int x1, int y1, int width, int height, float scale, int fc, int bc, unsigned char *bitmap) {
     int i, j;
     char f[3], b[3];
@@ -235,10 +237,7 @@ void draw_bitmap_spi(int x1, int y1, int width, int height, float scale, int fc,
     }
     lcd_spi_raise_cs();
 }
-// Draw a filled rectangle
-// this is the basic drawing promitive used by most drawing routines
-//    x1, y1, x2, y2 - the coordinates
-//    c - the colour
+
 void draw_rect_spi(int x1, int y1, int x2, int y2, int c) {
     // convert the colours to 565 format
     unsigned char col[3];
@@ -298,11 +297,6 @@ void draw_rect_spi(int x1, int y1, int x2, int y2, int c) {
     lcd_spi_raise_cs();
 }
 
-/******************************************************************************************
- Print a char on the LCD display
- Any characters not in the font will print as a space.
- The char is printed at the current location defined by current_x and current_y
-*****************************************************************************************/
 void lcd_print_char( int fc, int bc, char c, int orientation) {
     unsigned char *p, *fp, *np = NULL;
     int modx, mody, scale = 0x01;
@@ -331,10 +325,6 @@ void lcd_print_char( int fc, int bc, char c, int orientation) {
 
 }
 
-/******************************************************************************************
- Print a char on the LCD display at a specific (x, y) position
- Any characters not in the font will print as a space.
-*****************************************************************************************/
 void lcd_print_char_at(int fc, int bc, char c, int orientation, int x, int y) {
     unsigned char *p, *fp, *np = NULL;
     int modx, mody, scale = 0x01;
@@ -434,9 +424,6 @@ void display_put_c(char c) {
     lcd_print_char(gui_fcolour, gui_bcolour, c, ORIENT_NORMAL);// print it
 }
 
-/***
- *
-****////
 char lcd_put_char(char c, int flush) {
     lcd_putc(0, c);
     if (isprint(c)) lcd_char_pos++;
@@ -455,7 +442,6 @@ void lcd_print_string(char *s) {
     fflush(stdout);
 }
 
-///////=----------------------------------------===//////
 void lcd_clear() {
     draw_rect_spi(0, 0, hres - 1, vres - 1, BLACK);
 }
@@ -549,7 +535,6 @@ void reset_controller(void) {
     pin_set_bit(Pico_LCD_RST, LATSET);
     sleep_us(200000);
 }
-
 
 void pico_lcd_init() {
 #ifdef ILI9488

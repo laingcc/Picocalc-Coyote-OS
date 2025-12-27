@@ -131,5 +131,7 @@ extern void lcd_clear();
 extern void reset_controller(void);
 extern void pin_set_bit(int pin, unsigned int offset);
 
+extern void set_current_y(int y);
+extern void set_current_x(int x);
 
 #endif
