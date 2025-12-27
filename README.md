@@ -1,17 +1,18 @@
-# PicoCalc Hello World
+# PicoCalc Firmware
+ This is a basic firmware for the PicoCalc, currently it is essentially just a wrapper
+around tinyexpr which provides a calculator functionality with a simple UI on the PicoCalc hardware.
 
-Demonstrate how to use spi screen, i2c keyboard and psram on PicoCalc.
 
 ## Building
 ```
-git clone --recursive https://github.com/clockworkpi/PicoCalc.git
-cd PicoCalc/Code/picocalc_helloworld/
+git clone --recursive https://github.com/laingcc/Picocalc-Coyote-OS.git
+cd Picocalc-Coyote-OS/Coyote/
 
 mkdir build
 cd build
-export PICO_SDK_PATH=/where/pico-sdk/is
+export PICO_SDK_PATH=/path/to/pico-sdk
 cmake ..
-make  
+make
 ```
 
 ## How to Upload UF2 
@@ -50,15 +51,24 @@ So here is the standard running procedures:
 - Press Power On on Top of the PicoCalc
 
 
-If your firmware includes serial output, you can monitor it using **minicom** or **screen**:   
-```bash
-screen /dev/ttyACM0 115200
-```
+## Serial Output
 
-(Replace /dev/ttyACM0 with the correct serial port for your Pico.)  
+If your firmware includes serial output, you can monitor it using **minicom**, **screen**, or the Arduino IDE serial monitor.  
+See instructions above for connecting and selecting the correct serial port.
 
-The serial monitor of **Arduino IDE** is another great choice for PicoCalc serial output on both Linux and Windows.
+## Project Structure
 
+- `lcdspi/` - SPI LCD display driver and rendering functions
+- `keyboard/` - I2C keyboard scanning and input
+- `psram/` - PSRAM memory access routines
+- `main.c` - Example usage and hardware initialization
 
+## Requirements
 
+- Raspberry Pi Pico
+- PicoCalc hardware (LCD, keyboard, PSRAM)
+- [Pico SDK](https://github.com/raspberrypi/pico-sdk)
 
+## License
+
+See LICENSE file for details.
