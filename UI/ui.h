@@ -11,3 +11,4 @@ void ui_init();
 
 void update_tab_count(int new_count);
 void update_active_tab(int new_tab);
+void reboot_to_bootloader();

@@ -4,6 +4,8 @@
 
 #include "ui.h"
 #include "lcdspi.h"
+#include "pico/stdlib.h"
+#include "pico/bootrom.h"
 
 int tab_count = 5;
 int active_tab = 0;
@@ -53,4 +55,11 @@ void update_tab_count(int new_count) {
 void ui_init() {
     lcd_init();
     draw();
+}
+
+void reboot_to_bootloader() {
+    lcd_clear();
+    lcd_print_string("Rebooting to bootsel...\n");
+    sleep_ms(1000);
+    reset_usb_boot(1, 0);
 }
