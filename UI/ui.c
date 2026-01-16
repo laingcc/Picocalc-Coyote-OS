@@ -100,9 +100,10 @@ void ui_redraw_tab_content() {
     TabContext* ctx = &tab_contexts[active_tab];
 
     // Clear work area (y=14 to 294)
-    draw_rect_spi(0, 14, 320, 294, BLACK);
+    draw_rect_spi(0, 14, 320, 294, WHITE);
     set_current_x(0);
     set_current_y(15);
+    lcd_set_text_color(BLACK, WHITE);
 
     for (int i = 0; i < ctx->history_count; i++) {
         char buf[128];

@@ -71,6 +71,11 @@ void set_current_x(int x) {
     current_x = x;
 }
 
+void lcd_set_text_color(int fc, int bc) {
+    gui_fcolour = fc;
+    gui_bcolour = bc;
+}
+
 void define_region_spi(int xstart, int ystart, int xend, int yend, int rw) {
     unsigned char coord[4];
     lcd_spi_lower_cs();
