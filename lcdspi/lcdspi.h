@@ -113,7 +113,7 @@ extern void spi_write_command(unsigned char data);
 extern void spi_write_cd(unsigned char command, int data, ...);
 extern void spi_write_data24(uint32_t data);
 
-extern void spi_draw_pixel(uint16_t x, uint16_t y, uint16_t color) ;
+extern void spi_draw_pixel(uint16_t x, uint16_t y, uint32_t color) ;
 extern void draw_rect_spi(int x1, int y1, int x2, int y2, int c) ;
 extern void lcd_putc(uint8_t devn, uint8_t c);
 extern int  lcd_getc(uint8_t devn);

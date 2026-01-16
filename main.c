@@ -31,8 +31,13 @@ void handle_keyboard() {
             reboot_to_bootloader();
             break;
         case KEY_ENTER:
-            a = te_interp(ctx->current_input, 0);
-            ui_add_to_history(active_idx, ctx->current_input, a);
+            if (active_idx == 3) {
+                // Graphing mode: we don't need the result, just add to history to trigger redraw
+                ui_add_to_history(active_idx, ctx->current_input, 0);
+            } else {
+                a = te_interp(ctx->current_input, 0);
+                ui_add_to_history(active_idx, ctx->current_input, a);
+            }
             memset(ctx->current_input, 0, sizeof(ctx->current_input));
             ctx->input_index = 0;
             ui_redraw_tab_content();
