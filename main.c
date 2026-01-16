@@ -10,11 +10,10 @@
 #include "UI/ui.h"
 
 void handle_keyboard() {
-    static char lcd_buffer[320 * 3] = {0};
-    static int index = 0;
+    int active_idx = ui_get_active_tab_idx();
+    TabContext* ctx = ui_get_tab_context(active_idx);
     int c = lcd_getc(0);
     double a;
-    char buf[64];
     switch (c) {
         case KEY_F1:
             update_active_tab(0);
@@ -32,21 +31,28 @@ void handle_keyboard() {
             reboot_to_bootloader();
             break;
         case KEY_ENTER:
-            a = te_interp(lcd_buffer, 0);
-            sprintf(buf, "\n = %f\n", a);
-            lcd_print_string(buf);
-            memset(lcd_buffer, 0, sizeof(lcd_buffer));
-            index = 0;
+            a = te_interp(ctx->current_input, 0);
+            ui_add_to_history(active_idx, ctx->current_input, a);
+            memset(ctx->current_input, 0, sizeof(ctx->current_input));
+            ctx->input_index = 0;
+            ui_redraw_tab_content();
             break;
         case KEY_MOD_SHL:
         case KEY_MOD_SHR:
             break;
+        case KEY_BACKSPACE:
+            if (ctx->input_index > 0) {
+                ctx->input_index--;
+                ctx->current_input[ctx->input_index] = '\0';
+                ui_redraw_tab_content();
+            }
+            break;
         default:
-            if(c != -1 && c > 0) {
-                if (index < sizeof(lcd_buffer) - 1) {
-                    lcd_buffer[index++] = c;
-                    lcd_buffer[index] = '\0';
-                    lcd_putc(0,c);
+            if(c != -1 && c > 0 && c < 128) {
+                if (ctx->input_index < INPUT_BUFFER_SIZE - 1) {
+                    ctx->current_input[ctx->input_index++] = c;
+                    ctx->current_input[ctx->input_index] = '\0';
+                    ui_redraw_tab_content();
                 }
             };
     }

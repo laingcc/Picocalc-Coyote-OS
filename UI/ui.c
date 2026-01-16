@@ -6,9 +6,12 @@
 #include "lcdspi.h"
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
+#include <string.h>
+#include <stdio.h>
 
-int tab_count = 5;
+int tab_count = MAX_TABS;
 int active_tab = 0;
+TabContext tab_contexts[MAX_TABS];
 
 void clear_tabs() {
     draw_rect_spi(0, 295, 320, 320, BLACK);
@@ -43,8 +46,11 @@ void draw() {
 }
 
 void update_active_tab(int new_tab) {
-    active_tab = new_tab;
-    draw_tabs(tab_count, active_tab);
+    if (new_tab >= 0 && new_tab < tab_count) {
+        active_tab = new_tab;
+        draw();
+        ui_redraw_tab_content();
+    }
 }
 
 void update_tab_count(int new_count) {
@@ -53,8 +59,61 @@ void update_tab_count(int new_count) {
 }
 
 void ui_init() {
+    memset(tab_contexts, 0, sizeof(tab_contexts));
     lcd_init();
     draw();
+    ui_redraw_tab_content();
+}
+
+TabContext* ui_get_tab_context(int tab_idx) {
+    if (tab_idx >= 0 && tab_idx < MAX_TABS) {
+        return &tab_contexts[tab_idx];
+    }
+    return NULL;
+}
+
+int ui_get_active_tab_idx() {
+    return active_tab;
+}
+
+void ui_add_to_history(int tab_idx, const char* expression, double result) {
+    if (tab_idx < 0 || tab_idx >= MAX_TABS) return;
+    TabContext* ctx = &tab_contexts[tab_idx];
+
+    if (ctx->history_count < MAX_HISTORY) {
+        strncpy(ctx->history[ctx->history_count].expression, expression, INPUT_BUFFER_SIZE - 1);
+        ctx->history[ctx->history_count].result = result;
+        ctx->history[ctx->history_count].has_result = true;
+        ctx->history_count++;
+    } else {
+        // Shift history
+        for (int i = 0; i < MAX_HISTORY - 1; i++) {
+            ctx->history[i] = ctx->history[i+1];
+        }
+        strncpy(ctx->history[MAX_HISTORY-1].expression, expression, INPUT_BUFFER_SIZE - 1);
+        ctx->history[MAX_HISTORY-1].result = result;
+        ctx->history[MAX_HISTORY-1].has_result = true;
+    }
+}
+
+void ui_redraw_tab_content() {
+    TabContext* ctx = &tab_contexts[active_tab];
+
+    // Clear work area (y=14 to 294)
+    draw_rect_spi(0, 14, 320, 294, BLACK);
+    set_current_x(0);
+    set_current_y(15);
+
+    for (int i = 0; i < ctx->history_count; i++) {
+        char buf[128];
+        lcd_print_string(ctx->history[i].expression);
+        sprintf(buf, "\n = %f\n", ctx->history[i].result);
+        lcd_print_string(buf);
+    }
+
+    // Print current input
+    lcd_print_string("> ");
+    lcd_print_string(ctx->current_input);
 }
 
 void reboot_to_bootloader() {
