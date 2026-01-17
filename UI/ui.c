@@ -142,6 +142,32 @@ void ui_draw_graph(const char* expression) {
     te_free(expr);
 }
 
+void ui_redraw_input_only() {
+    TabContext* ctx = &tab_contexts[active_tab];
+    if (active_tab == 3) {
+        // Redraw input bar at the bottom
+        draw_rect_spi(0, 280, 320, 294, WHITE);
+        set_current_x(0);
+        set_current_y(281);
+        lcd_set_text_color(BLACK, WHITE);
+        lcd_print_string("f(x)=");
+        lcd_print_string(ctx->current_input);
+    } else {
+        // Determine input line position. We can use history_count to estimate.
+        // history_count * 2 lines (expr + result) + some spacing.
+        // Each line is 8 pixels (MainFont height is 8 from font1.h)
+        int y_pos = 15 + (ctx->history_count * 3 * 8);
+        // 3 lines per history item: expr, result, blank line
+
+        draw_rect_spi(0, y_pos, 320, y_pos + 8, WHITE);
+        set_current_x(0);
+        set_current_y(y_pos);
+        lcd_set_text_color(BLACK, WHITE);
+        lcd_print_string("> ");
+        lcd_print_string(ctx->current_input);
+    }
+}
+
 void ui_redraw_tab_content() {
     TabContext* ctx = &tab_contexts[active_tab];
 
@@ -150,13 +176,7 @@ void ui_redraw_tab_content() {
         if (ctx->history_count > 0) {
             ui_draw_graph(ctx->history[ctx->history_count - 1].expression);
         }
-        // Overlay input bar
-        draw_rect_spi(0, 280, 320, 294, WHITE);
-        set_current_x(0);
-        set_current_y(281);
-        lcd_set_text_color(BLACK, WHITE);
-        lcd_print_string("f(x)=");
-        lcd_print_string(ctx->current_input);
+        ui_redraw_input_only();
     } else {
         // Clear work area (y=14 to 294)
         draw_rect_spi(0, 14, 320, 294, WHITE);

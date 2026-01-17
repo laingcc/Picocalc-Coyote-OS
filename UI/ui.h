@@ -34,5 +34,6 @@ TabContext* ui_get_tab_context(int tab_idx);
 int ui_get_active_tab_idx();
 void ui_add_to_history(int tab_idx, const char* expression, double result);
 void ui_redraw_tab_content();
+void ui_redraw_input_only();
 
 #endif //COYOTE_UI_H

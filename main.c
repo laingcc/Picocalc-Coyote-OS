@@ -49,7 +49,7 @@ void handle_keyboard() {
             if (ctx->input_index > 0) {
                 ctx->input_index--;
                 ctx->current_input[ctx->input_index] = '\0';
-                ui_redraw_tab_content();
+                ui_redraw_input_only();
             }
             break;
         default:
@@ -57,7 +57,7 @@ void handle_keyboard() {
                 if (ctx->input_index < INPUT_BUFFER_SIZE - 1) {
                     ctx->current_input[ctx->input_index++] = c;
                     ctx->current_input[ctx->input_index] = '\0';
-                    ui_redraw_tab_content();
+                    ui_redraw_input_only();
                 }
             };
     }
