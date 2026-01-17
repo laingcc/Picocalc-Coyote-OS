@@ -10,6 +10,13 @@
 #define AUDIO_PIN_L 26
 #define AUDIO_PIN_R 27
 
-void init_pwm(irq_handler_t);
+typedef enum {
+    SND_BEEP,
+    SND_TAB_SWITCH,
+    SND_ERROR
+} sound_type_t;
+
+void sound_init();
+void sound_play(sound_type_t snd);
 
 #endif //PWM_SOUND_H
