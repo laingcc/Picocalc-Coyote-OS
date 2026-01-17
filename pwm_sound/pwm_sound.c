@@ -5,6 +5,7 @@ static volatile int sound_counter = 0;
 static volatile int sound_frequency = 0;
 static volatile int sound_duration = 0;
 static int slice_l, slice_r;
+static bool sound_enabled = true;
 
 void pwm_interrupt_handler() {
     pwm_clear_irq(slice_l);
@@ -58,6 +59,7 @@ void sound_init() {
 }
 
 void sound_play(sound_type_t snd) {
+    if (!sound_enabled) return;
     switch(snd) {
         case SND_BEEP:
             sound_frequency = 1000;
@@ -73,4 +75,12 @@ void sound_play(sound_type_t snd) {
             break;
     }
     sound_counter = 0;
+}
+
+void sound_set_enabled(bool enabled) {
+    sound_enabled = enabled;
+}
+
+bool sound_is_enabled() {
+    return sound_enabled;
 }

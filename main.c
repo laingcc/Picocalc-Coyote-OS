@@ -37,7 +37,7 @@ void handle_keyboard() {
             update_active_tab(3);
             break;
         case KEY_F5:
-            reboot_to_bootloader();
+            ui_show_menu();
             break;
         case KEY_ENTER:
             if (active_idx == 3) {
