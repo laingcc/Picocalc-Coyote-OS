@@ -18,5 +18,7 @@ typedef enum {
 
 void sound_init();
 void sound_play(sound_type_t snd);
+void sound_set_enabled(bool enabled);
+bool sound_is_enabled();
 
 #endif //PWM_SOUND_H

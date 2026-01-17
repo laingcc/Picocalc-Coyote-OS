@@ -11,6 +11,10 @@
 #include <math.h>
 #include "tinyexpr/tinyexpr.h"
 #include "pwm_sound/pwm_sound.h"
+#include "keyboard_definition.h"
+
+#define MENU_WIDTH 22
+#define MENU_HEIGHT 6
 
 int tab_count = MAX_TABS;
 int active_tab = 0;
@@ -215,4 +219,85 @@ void reboot_to_bootloader() {
     lcd_print_string("Rebooting to bootsel...\n");
     sleep_ms(1000);
     reset_usb_boot(1, 0);
+}
+
+static void draw_menu(int selected_item) {
+    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
+    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
+
+    // Background
+    draw_rect_spi(start_x, start_y, start_x + MENU_WIDTH * 8, start_y + MENU_HEIGHT * 12, BLACK);
+
+    // ASCII Border
+    lcd_set_text_color(WHITE, BLACK);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y);
+    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y);
+
+    for (int i = 1; i < MENU_HEIGHT - 1; i++) {
+        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x, start_y + i * 12);
+        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + i * 12);
+    }
+
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y + (MENU_HEIGHT - 1) * 12);
+    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y + (MENU_HEIGHT - 1) * 12);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + (MENU_HEIGHT - 1) * 12);
+
+    // Menu Title
+    char* title = " SETTINGS ";
+    int title_x = start_x + (MENU_WIDTH * 8 - strlen(title) * 8) / 2;
+    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x - 8, start_y);
+    for (int i = 0; i < (int)strlen(title); i++) lcd_print_char_at(WHITE, BLACK, title[i], 0, title_x + i * 8, start_y);
+    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x + (int)strlen(title) * 8, start_y);
+
+    // Options
+    char opt1[32];
+    snprintf(opt1, sizeof(opt1), " %s Beeps ", sound_is_enabled() ? "Disable" : "Enable ");
+    char* opt2 = " Reboot to Bootloader ";
+
+    int opt1_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt1) * 8) / 2;
+    int opt2_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt2) * 8) / 2;
+
+    for (int i = 0; i < (int)strlen(opt1); i++) lcd_print_char_at(selected_item == 0 ? BLACK : WHITE, selected_item == 0 ? WHITE : BLACK, opt1[i], 0, opt1_x + i * 8, start_y + 2 * 12);
+    for (int i = 0; i < (int)strlen(opt2); i++) lcd_print_char_at(selected_item == 1 ? BLACK : WHITE, selected_item == 1 ? WHITE : BLACK, opt2[i], 0, opt2_x + i * 8, start_y + 3 * 12);
+}
+
+void ui_show_menu() {
+    int selected = 0;
+    bool exit_menu = false;
+    draw_menu(selected);
+
+    while (!exit_menu) {
+        int c = lcd_getc(0);
+        switch (c) {
+            case KEY_UP:
+                if (selected > 0) {
+                    selected--;
+                    draw_menu(selected);
+                }
+                break;
+            case KEY_DOWN:
+                if (selected < 1) {
+                    selected++;
+                    draw_menu(selected);
+                }
+                break;
+            case KEY_ENTER:
+                if (selected == 0) {
+                    sound_set_enabled(!sound_is_enabled());
+                    draw_menu(selected);
+                } else if (selected == 1) {
+                    reboot_to_bootloader();
+                }
+                break;
+            case KEY_ESC:
+            case KEY_BACKSPACE:
+                exit_menu = true;
+                break;
+            default:
+                break;
+        }
+        sleep_ms(20);
+    }
+    ui_redraw_tab_content();
 }
