@@ -15,6 +15,7 @@ include_directories(
 add_subdirectory(i2ckbd)
 add_subdirectory(lcdspi)
 add_subdirectory(pwm_sound)
+add_subdirectory(pico-vfs)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/rp2040-psram rp2040-psram)
 
 add_executable(coyote
@@ -22,6 +23,7 @@ add_executable(coyote
         UI/ui.c
         keyboard_definition.h
         tinyexpr/tinyexpr.c
+        config.h
 )
 
 ##picocalc spi0
@@ -35,7 +37,7 @@ target_compile_definitions(coyote PRIVATE
     PSRAM_PIN_MISO=3
 )
 
-target_link_libraries(coyote
+target_link_libraries(coyote PRIVATE
     pico_stdlib
     hardware_flash
     hardware_irq
@@ -51,7 +53,11 @@ target_link_libraries(coyote
 	lcdspi
     rp2040-psram
 	pwm_sound
+    blockdevice_sd
+    filesystem_fat
+    filesystem_vfs
 	)
+
 
 pico_enable_stdio_usb(coyote 0)
 pico_enable_stdio_uart(coyote 1)

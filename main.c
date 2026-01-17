@@ -1,7 +1,7 @@
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
-#include "hardware/gpio.h"
 #include "hardware/clocks.h"
 #include "i2ckbd.h"
 #include "keyboard_definition.h"
@@ -9,6 +9,14 @@
 #include "tinyexpr/tinyexpr.h"
 #include "UI/ui.h"
 #include "pwm_sound/pwm_sound.h"
+#include "config.h"
+
+#include "blockdevice/sd.h"
+#include "filesystem/fat.h"
+#include "filesystem/vfs.h"
+#include "dirent.h"
+
+char active_directory[50] = "/coyote";
 
 void handle_keyboard() {
     int active_idx = ui_get_active_tab_idx();
@@ -70,6 +78,35 @@ void handle_keyboard() {
     }
 }
 
+bool fs_init(void) {
+    blockdevice_t *sd = blockdevice_sd_create(
+        spi0,
+        SD_MOSI_PIN,
+        SD_MISO_PIN,
+        SD_SCLK_PIN,
+        SD_CS_PIN,
+        125000000 /2 /4,
+        true
+        );
+
+    filesystem_t *fat = filesystem_fat_create();
+    int err = fs_mount("/", fat, sd);
+    if (err == -1)
+    {
+        err = fs_format(fat, sd);
+        if (err == -1)
+        {
+            return false;
+        }
+        err = fs_mount("/", fat, sd);
+        if (err == -1)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 int main() {
     set_sys_clock_khz(133000, true);
     stdio_init_all();
@@ -83,6 +120,21 @@ int main() {
 
     sound_init();
     ui_init();
+
+    bool test = fs_init();
+    if (test) {
+        // lcd_print_string("Filesystem initialized\n");
+        DIR *dir = opendir(active_directory);
+        if (dir == NULL) {
+            lcd_print_string("Main Coyote Directory Not Found, Creating...\n");
+            int err = mkdir(active_directory,0755);
+            if (err == -1) {
+                lcd_print_string("Error Creating Main Coyote Directory\n");
+            }else {
+                lcd_print_string("Main Coyote Directory Created\n");
+            }
+        }
+    }
 
     while (1) {
         handle_keyboard();

@@ -17,7 +17,7 @@ int active_tab = 0;
 TabContext tab_contexts[MAX_TABS];
 
 void clear_tabs() {
-    draw_rect_spi(0, 295, 320, 320, BLACK);
+    draw_rect_spi(0, 295, 320, 320, WHITE);
 }
 
 void draw_tabs(int count, int active) {
@@ -30,21 +30,15 @@ void draw_tabs(int count, int active) {
             y = 295;
         }
         int y2 = 320;
-        draw_rect_spi(x+5, y, x2, y2, BLUE);
-        lcd_print_char_at(WHITE, BLUE, 'A' + i, ORIENT_NORMAL, x + 10, y + 5);
+        draw_rect_spi(x+5, y, x2, y2, GRAY);
+        lcd_print_char_at(WHITE, GRAY, '1'+i, ORIENT_NORMAL, x + 10, y + 5);
     }
-}
-
-void draw_header() {
-    lcd_print_string("Coyote OS v0.0.0");
-    draw_rect_spi(0, 12, 320, 13, BLUE);
 }
 
 void draw() {
     lcd_clear();
-    draw_header();
     draw_tabs(tab_count, active_tab);
-    set_current_y(13+12);
+    set_current_y(12);
     set_current_x(0);
 }
 
@@ -176,7 +170,7 @@ void ui_redraw_input_only() {
         // Determine input line position. We can use history_count to estimate.
         // history_count * 2 lines (expr + result) + some spacing.
         // Each line is 8 pixels (MainFont height is 8 from font1.h)
-        int y_pos = 15 + (ctx->history_count * 3 * 8);
+        int y_pos = (ctx->history_count * 3 * 8);
         // 3 lines per history item: expr, result, blank line
 
         draw_rect_spi(0, y_pos, 320, y_pos + 8, WHITE);
@@ -192,16 +186,15 @@ void ui_redraw_tab_content() {
     TabContext* ctx = &tab_contexts[active_tab];
 
     if (active_tab == 3) { // Graphing mode on Tab 4
-        draw_rect_spi(0, 14, 320, 294, BLACK);
+        draw_rect_spi(0, 0, 320, 294, BLACK);
         if (ctx->history_count > 0) {
             ui_draw_graph(ctx->history[ctx->history_count - 1].expression);
         }
         ui_redraw_input_only();
     } else {
-        // Clear work area (y=14 to 294)
-        draw_rect_spi(0, 14, 320, 294, WHITE);
+        draw_rect_spi(0, 0, 320, 294, WHITE);
         set_current_x(0);
-        set_current_y(15);
+        set_current_y(0);
         lcd_set_text_color(BLACK, WHITE);
 
         for (int i = 0; i < ctx->history_count; i++) {
