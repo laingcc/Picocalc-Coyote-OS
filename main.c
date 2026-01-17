@@ -6,31 +6,61 @@
 #include "i2ckbd.h"
 #include "keyboard_definition.h"
 #include "lcdspi.h"
-#include "pico/bootrom.h"
 #include "tinyexpr/tinyexpr.h"
 #include "UI/ui.h"
 
-const uint LEDPIN = 25;
-
-void updateOverlay() {
-    char buf[64];
-    int bat = read_battery();
-    bat = bat>>8;
-    int charging = bitRead(bat, 7);
-    if (charging == 1) {
-        lcd_print_battery(6);
+void handle_keyboard() {
+    int active_idx = ui_get_active_tab_idx();
+    TabContext* ctx = ui_get_tab_context(active_idx);
+    int c = lcd_getc(0);
+    double a;
+    switch (c) {
+        case KEY_F1:
+            update_active_tab(0);
+            break;
+        case KEY_F2:
+            update_active_tab(1);
+            break;
+        case KEY_F3:
+            update_active_tab(2);
+            break;
+        case KEY_F4:
+            update_active_tab(3);
+            break;
+        case KEY_F5:
+            reboot_to_bootloader();
+            break;
+        case KEY_ENTER:
+            if (active_idx == 3) {
+                // Graphing mode: we don't need the result, just add to history to trigger redraw
+                ui_add_to_history(active_idx, ctx->current_input, 0);
+            } else {
+                a = te_interp(ctx->current_input, 0);
+                ui_add_to_history(active_idx, ctx->current_input, a);
+            }
+            memset(ctx->current_input, 0, sizeof(ctx->current_input));
+            ctx->input_index = 0;
+            ui_redraw_tab_content();
+            break;
+        case KEY_MOD_SHL:
+        case KEY_MOD_SHR:
+            break;
+        case KEY_BACKSPACE:
+            if (ctx->input_index > 0) {
+                ctx->input_index--;
+                ctx->current_input[ctx->input_index] = '\0';
+                ui_redraw_input_only();
+            }
+            break;
+        default:
+            if(c != -1 && c > 0 && c < 128) {
+                if (ctx->input_index < INPUT_BUFFER_SIZE - 1) {
+                    ctx->current_input[ctx->input_index++] = c;
+                    ctx->current_input[ctx->input_index] = '\0';
+                    ui_redraw_input_only();
+                }
+            };
     }
-    if (charging == 0) {
-        int val = (int) (((float) bat / 100) * 5);
-        lcd_print_battery(val);
-    }
-}
-
-void reboot_to_bootloader() {
-    lcd_clear();
-    lcd_print_string("Rebooting to bootsel...\n");
-    sleep_ms(1000);
-    reset_usb_boot(1, 0);
 }
 
 int main() {
@@ -45,43 +75,9 @@ int main() {
     init_i2c_kbd();
 
     ui_init();
-    unsigned char lcd_buffer[320 * 3] = {0};
-    int index = 0;
-    while (1) {
-        int c = lcd_getc(0);
-        double a;
-        char buf[64];
-        switch (c) {
-            case KEY_F1:
-                update_active_tab(0);
-                break;
-            case KEY_F2:
-                update_active_tab(1);
-                break;
-            case KEY_F3:
-                update_active_tab(2);
-                break;
-            case KEY_F4:
-                update_active_tab(3);
-                break;
-            case KEY_F5:
-                reboot_to_bootloader();
-            case KEY_ENTER:
-                a = te_interp(lcd_buffer, 0);
-                sprintf(buf, "\n = %f\n", a);
-                lcd_print_string(buf);
-                memset(lcd_buffer, 0, sizeof(lcd_buffer));
-                index = 0;
 
-            case KEY_MOD_SHL:
-            case KEY_MOD_SHR:
-                break;
-            default:
-                if(c != -1 && c > 0) {
-                    lcd_buffer[index++] = c;
-                    lcd_putc(0,c);
-                };
-        }
+    while (1) {
+        handle_keyboard();
         sleep_ms(20);
     }
 }

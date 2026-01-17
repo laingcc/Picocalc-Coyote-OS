@@ -71,6 +71,11 @@ void set_current_x(int x) {
     current_x = x;
 }
 
+void lcd_set_text_color(int fc, int bc) {
+    gui_fcolour = fc;
+    gui_bcolour = bc;
+}
+
 void define_region_spi(int xstart, int ystart, int xend, int yend, int rw) {
     unsigned char coord[4];
     lcd_spi_lower_cs();
@@ -235,6 +240,19 @@ void draw_bitmap_spi(int x1, int y1, int width, int height, float scale, int fc,
             }
         }
     }
+    lcd_spi_raise_cs();
+}
+
+void spi_draw_pixel(uint16_t x, uint16_t y, uint32_t color) {
+    if (x >= hres || y >= vres) return;
+    define_region_spi(x, y, x, y, 1);
+    unsigned char col[3];
+#ifdef ILI9488
+    col[0] = (color >> 16);
+    col[1] = (color >> 8) & 0xFF;
+    col[2] = (color & 0xFF);
+#endif
+    hw_send_spi(col, 3);
     lcd_spi_raise_cs();
 }
 
