@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "tinyexpr/tinyexpr.h"
+#include "pwm_sound/pwm_sound.h"
 
 int tab_count = MAX_TABS;
 int active_tab = 0;
@@ -49,6 +50,9 @@ void draw() {
 
 void update_active_tab(int new_tab) {
     if (new_tab >= 0 && new_tab < tab_count) {
+        if (active_tab != new_tab) {
+            sound_play(SND_TAB_SWITCH);
+        }
         active_tab = new_tab;
         draw();
         ui_redraw_tab_content();
@@ -126,16 +130,32 @@ void ui_draw_graph(const char* expression) {
     draw_rect_spi(0, mid_y, 319, mid_y, GRAY);
     draw_rect_spi(mid_x, 14, mid_x, 294, GRAY);
 
+    int last_sy = -1;
     for (int sx = 0; sx < 320; sx++) {
         x_val = ((double)sx - mid_x) / scale;
         double y_val = te_eval(expr);
 
-        if (isnan(y_val) || isinf(y_val)) continue;
+        if (isnan(y_val) || isinf(y_val)) {
+            last_sy = -1;
+            continue;
+        }
 
         int sy = mid_y - (int)(y_val * scale);
 
         if (sy >= 14 && sy <= 294) {
-            spi_draw_pixel(sx, sy, RED);
+            if (last_sy != -1) {
+                // Draw vertical line to connect points if needed
+                int y_start = last_sy < sy ? last_sy : sy;
+                int y_end = last_sy < sy ? sy : last_sy;
+                for (int y = y_start; y <= y_end; y++) {
+                    if (y >= 14 && y <= 294) spi_draw_pixel(sx, y, RED);
+                }
+            } else {
+                spi_draw_pixel(sx, sy, RED);
+            }
+            last_sy = sy;
+        } else {
+            last_sy = -1;
         }
     }
 

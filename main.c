@@ -8,6 +8,7 @@
 #include "lcdspi.h"
 #include "tinyexpr/tinyexpr.h"
 #include "UI/ui.h"
+#include "pwm_sound/pwm_sound.h"
 
 void handle_keyboard() {
     int active_idx = ui_get_active_tab_idx();
@@ -34,8 +35,14 @@ void handle_keyboard() {
             if (active_idx == 3) {
                 // Graphing mode: we don't need the result, just add to history to trigger redraw
                 ui_add_to_history(active_idx, ctx->current_input, 0);
+                sound_play(SND_BEEP);
             } else {
                 a = te_interp(ctx->current_input, 0);
+                if (isnan(a)) {
+                    sound_play(SND_ERROR);
+                } else {
+                    sound_play(SND_BEEP);
+                }
                 ui_add_to_history(active_idx, ctx->current_input, a);
             }
             memset(ctx->current_input, 0, sizeof(ctx->current_input));
@@ -74,6 +81,7 @@ int main() {
 
     init_i2c_kbd();
 
+    sound_init();
     ui_init();
 
     while (1) {
