@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "i2ckbd.h"
@@ -18,12 +19,91 @@
 
 char active_directory[50] = "/coyote";
 
+static unsigned char scr_buffer[LCD_WIDTH * 3];
+
+void take_screenshot() {
+    char filename[64];
+    static int screen_count = 0;
+    FILE *f = NULL;
+
+    for (; screen_count < 1000; screen_count++) {
+        sprintf(filename, "%s/scr_%03d.bmp", active_directory, screen_count);
+        f = fopen(filename, "r");
+        if (f) {
+            fclose(f);
+            continue;
+        }
+        break;
+    }
+
+    if (screen_count >= 1000) return;
+
+    f = fopen(filename, "wb");
+    if (!f) return;
+
+    unsigned char header[54] = {
+        0x42, 0x4D,             // Signature 'BM'
+        0, 0, 0, 0,             // File size
+        0, 0, 0, 0,             // Reserved
+        54, 0, 0, 0,            // Offset to pixel data
+        40, 0, 0, 0,            // Header size
+        0, 0, 0, 0,             // Width (fill later)
+        0, 0, 0, 0,             // Height (fill later)
+        1, 0,                   // Planes
+        24, 0,                  // Bits per pixel
+        0, 0, 0, 0,             // Compression (none)
+        0, 0, 0, 0,             // Image size
+        0, 0, 0, 0,             // X pixels per meter
+        0, 0, 0, 0,             // Y pixels per meter
+        0, 0, 0, 0,             // Total colors
+        0, 0, 0, 0              // Important colors
+    };
+
+    uint32_t width = LCD_WIDTH;
+    uint32_t height = LCD_HEIGHT;
+    uint32_t image_size = width * height * 3;
+    uint32_t file_size = 54 + image_size;
+
+    header[2] = (uint8_t)(file_size);
+    header[3] = (uint8_t)(file_size >> 8);
+    header[4] = (uint8_t)(file_size >> 16);
+    header[5] = (uint8_t)(file_size >> 24);
+
+    header[18] = (uint8_t)(width);
+    header[19] = (uint8_t)(width >> 8);
+    header[20] = (uint8_t)(width >> 16);
+    header[21] = (uint8_t)(width >> 24);
+
+    header[22] = (uint8_t)(height);
+    header[23] = (uint8_t)(height >> 8);
+    header[24] = (uint8_t)(height >> 16);
+    header[25] = (uint8_t)(height >> 24);
+
+    header[34] = (uint8_t)(image_size);
+    header[35] = (uint8_t)(image_size >> 8);
+    header[36] = (uint8_t)(image_size >> 16);
+    header[37] = (uint8_t)(image_size >> 24);
+
+    fwrite(header, 1, 54, f);
+
+    for (int y = LCD_HEIGHT - 1; y >= 0; y--) {
+        read_buffer_spi(0, y, LCD_WIDTH - 1, y, scr_buffer);
+        fwrite(scr_buffer, 1, LCD_WIDTH * 3, f);
+    }
+
+    fclose(f);
+    sound_play(SND_BEEP);
+}
+
 void handle_keyboard() {
     int active_idx = ui_get_active_tab_idx();
     TabContext* ctx = ui_get_tab_context(active_idx);
     int c = lcd_getc(0);
     double a;
     switch (c) {
+        case 19: // Ctrl+S
+            take_screenshot();
+            break;
         case KEY_F1:
             update_active_tab(0);
             break;
