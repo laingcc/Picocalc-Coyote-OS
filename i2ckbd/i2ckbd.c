@@ -14,7 +14,7 @@ void init_i2c_kbd() {
     i2c_inited = 1;
 }
 
-int read_i2c_kbd() {
+int read_i2c_kbd_with_meta(int *ctrl) {
     int retval;
     static int ctrlheld = 0;
     uint16_t buff = 0;
@@ -50,11 +50,19 @@ int read_i2c_kbd() {
                     break;
             }
             c = realc;
-            if (c >= 'a' && c <= 'z' && ctrlheld)c = c - 'a' + 1;
+            if (ctrl) *ctrl = ctrlheld;
+            return c;
         }
-        return c;
     }
+    if (ctrl) *ctrl = ctrlheld;
     return -1;
+}
+
+int read_i2c_kbd() {
+    int ctrl = 0;
+    int c = read_i2c_kbd_with_meta(&ctrl);
+    if (c >= 'a' && c <= 'z' && ctrl) c = c - 'a' + 1;
+    return c;
 }
 
 int read_battery() {
