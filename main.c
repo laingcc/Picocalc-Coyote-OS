@@ -10,6 +10,7 @@
 #include "UI/ui.h"
 #include "pwm_sound/pwm_sound.h"
 #include "config.h"
+#include "text_mode.h"
 
 #include "blockdevice/sd.h"
 #include "filesystem/fat.h"
@@ -19,9 +20,19 @@
 char active_directory[50] = "/coyote";
 
 void handle_keyboard() {
+    int c = lcd_getc(0);
+    if (c == KEY_HOME) {
+        ui_show_mode_menu();
+        return;
+    }
+
+    if (ui_get_current_mode() == MODE_TEXT) {
+        text_mode_handle_input(c);
+        return;
+    }
+
     int active_idx = ui_get_active_tab_idx();
     TabContext* ctx = ui_get_tab_context(active_idx);
-    int c = lcd_getc(0);
     double a;
     switch (c) {
         case KEY_F1:
@@ -67,8 +78,11 @@ void handle_keyboard() {
                 ui_redraw_input_only();
             }
             break;
+        case KEY_NONE:
+        case -1:
+            break;
         default:
-            if(c != -1 && c > 0 && c < 128) {
+            if(c > 0 && c < 128) {
                 if (ctx->input_index < INPUT_BUFFER_SIZE - 1) {
                     ctx->current_input[ctx->input_index++] = c;
                     ctx->current_input[ctx->input_index] = '\0';

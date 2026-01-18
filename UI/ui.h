@@ -36,5 +36,14 @@ void ui_add_to_history(int tab_idx, const char* expression, double result);
 void ui_redraw_tab_content();
 void ui_redraw_input_only();
 void ui_show_menu();
+void ui_show_mode_menu();
+
+typedef enum {
+    MODE_CALCULATOR,
+    MODE_TEXT
+} app_mode_t;
+
+app_mode_t ui_get_current_mode();
+void ui_set_current_mode(app_mode_t mode);
 
 #endif //COYOTE_UI_H

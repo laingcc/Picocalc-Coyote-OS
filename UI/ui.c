@@ -12,6 +12,7 @@
 #include "tinyexpr/tinyexpr.h"
 #include "pwm_sound/pwm_sound.h"
 #include "keyboard_definition.h"
+#include "text_mode.h"
 
 #define MENU_WIDTH 22
 #define MENU_HEIGHT 6
@@ -19,6 +20,23 @@
 int tab_count = MAX_TABS;
 int active_tab = 0;
 TabContext tab_contexts[MAX_TABS];
+static app_mode_t current_mode = MODE_CALCULATOR;
+
+static void draw();
+
+app_mode_t ui_get_current_mode() {
+    return current_mode;
+}
+
+void ui_set_current_mode(app_mode_t mode) {
+    current_mode = mode;
+    if (current_mode == MODE_CALCULATOR) {
+        draw();
+        ui_redraw_tab_content();
+    } else if (current_mode == MODE_TEXT) {
+        text_mode_redraw();
+    }
+}
 
 void clear_tabs() {
     draw_rect_spi(0, 295, 320, 320, WHITE);
@@ -39,7 +57,7 @@ void draw_tabs(int count, int active) {
     }
 }
 
-void draw() {
+static void draw() {
     lcd_clear();
     draw_tabs(tab_count, active_tab);
     set_current_y(12);
@@ -260,6 +278,90 @@ static void draw_menu(int selected_item) {
 
     for (int i = 0; i < (int)strlen(opt1); i++) lcd_print_char_at(selected_item == 0 ? BLACK : WHITE, selected_item == 0 ? WHITE : BLACK, opt1[i], 0, opt1_x + i * 8, start_y + 2 * 12);
     for (int i = 0; i < (int)strlen(opt2); i++) lcd_print_char_at(selected_item == 1 ? BLACK : WHITE, selected_item == 1 ? WHITE : BLACK, opt2[i], 0, opt2_x + i * 8, start_y + 3 * 12);
+}
+
+static void draw_mode_menu(int selected_item) {
+    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
+    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
+
+    // Background
+    draw_rect_spi(start_x, start_y, start_x + MENU_WIDTH * 8, start_y + MENU_HEIGHT * 12, BLACK);
+
+    // ASCII Border
+    lcd_set_text_color(WHITE, BLACK);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y);
+    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y);
+
+    for (int i = 1; i < MENU_HEIGHT - 1; i++) {
+        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x, start_y + i * 12);
+        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + i * 12);
+    }
+
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y + (MENU_HEIGHT - 1) * 12);
+    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y + (MENU_HEIGHT - 1) * 12);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + (MENU_HEIGHT - 1) * 12);
+
+    // Menu Title
+    char* title = " MODE ";
+    int title_x = start_x + (MENU_WIDTH * 8 - strlen(title) * 8) / 2;
+    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x - 8, start_y);
+    for (int i = 0; i < (int)strlen(title); i++) lcd_print_char_at(WHITE, BLACK, title[i], 0, title_x + i * 8, start_y);
+    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x + (int)strlen(title) * 8, start_y);
+
+    // Options
+    char* opt1 = " Text ";
+    char* opt2 = " Calculator ";
+
+    int opt1_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt1) * 8) / 2;
+    int opt2_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt2) * 8) / 2;
+
+    for (int i = 0; i < (int)strlen(opt1); i++) lcd_print_char_at(selected_item == 0 ? BLACK : WHITE, selected_item == 0 ? WHITE : BLACK, opt1[i], 0, opt1_x + i * 8, start_y + 2 * 12);
+    for (int i = 0; i < (int)strlen(opt2); i++) lcd_print_char_at(selected_item == 1 ? BLACK : WHITE, selected_item == 1 ? WHITE : BLACK, opt2[i], 0, opt2_x + i * 8, start_y + 3 * 12);
+}
+
+void ui_show_mode_menu() {
+    int selected = (current_mode == MODE_TEXT) ? 0 : 1;
+    bool exit_menu = false;
+    draw_mode_menu(selected);
+
+    while (!exit_menu) {
+        int c = lcd_getc(0);
+        switch (c) {
+            case KEY_UP:
+                if (selected > 0) {
+                    selected--;
+                    draw_mode_menu(selected);
+                }
+                break;
+            case KEY_DOWN:
+                if (selected < 1) {
+                    selected++;
+                    draw_mode_menu(selected);
+                }
+                break;
+            case KEY_ENTER:
+                if (selected == 0) {
+                    ui_set_current_mode(MODE_TEXT);
+                } else if (selected == 1) {
+                    ui_set_current_mode(MODE_CALCULATOR);
+                }
+                exit_menu = true;
+                break;
+            case KEY_ESC:
+            case KEY_BACKSPACE:
+                exit_menu = true;
+                break;
+            default:
+                break;
+        }
+        sleep_ms(20);
+    }
+    if (current_mode == MODE_CALCULATOR) {
+        ui_redraw_tab_content();
+    } else {
+        text_mode_redraw();
+    }
 }
 
 void ui_show_menu() {

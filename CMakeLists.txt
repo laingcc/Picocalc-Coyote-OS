@@ -21,6 +21,7 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/rp2040-psram rp2040-psram)
 add_executable(coyote
 	main.c
         UI/ui.c
+        text_mode.c
         keyboard_definition.h
         tinyexpr/tinyexpr.c
         config.h
