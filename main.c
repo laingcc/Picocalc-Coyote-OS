@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "i2ckbd.h"
@@ -10,6 +11,7 @@
 #include "UI/ui.h"
 #include "pwm_sound/pwm_sound.h"
 #include "config.h"
+#include "utils.h"
 
 #include "blockdevice/sd.h"
 #include "filesystem/fat.h"
@@ -21,8 +23,20 @@ char active_directory[50] = "/coyote";
 void handle_keyboard() {
     int active_idx = ui_get_active_tab_idx();
     TabContext* ctx = ui_get_tab_context(active_idx);
-    int c = lcd_getc(0);
+    int ctrl = 0;
+    int c = read_i2c_kbd_with_meta(&ctrl);
     double a;
+
+    if (ctrl && c == 's') {
+        draw_rect_spi(0, 0, 319, 319, WHITE);
+        sound_play(SND_BEEP);
+        sleep_ms(50);
+        draw();
+        ui_redraw_tab_content();
+        take_screenshot(active_directory);
+        return;
+    }
+
     switch (c) {
         case KEY_F1:
             update_active_tab(0);

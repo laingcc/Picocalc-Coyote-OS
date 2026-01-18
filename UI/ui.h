@@ -25,6 +25,7 @@ typedef struct {
 } TabContext;
 
 void ui_init();
+void draw();
 
 void update_tab_count(int new_count);
 void update_active_tab(int new_tab);
