@@ -27,6 +27,11 @@ void handle_keyboard() {
     double a;
     switch (c) {
         case 19: // Ctrl+S
+            draw_rect_spi(0, 0, 319, 319, WHITE);
+            sound_play(SND_BEEP);
+            sleep_ms(50);
+            draw();
+            ui_redraw_tab_content();
             take_screenshot(active_directory);
             break;
         case KEY_F1:

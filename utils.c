@@ -62,5 +62,4 @@ void take_screenshot(const char* directory) {
     }
 
     fclose(f);
-    sound_play(SND_BEEP);
 }
