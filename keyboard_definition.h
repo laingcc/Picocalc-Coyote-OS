@@ -31,6 +31,7 @@
 #define KEY_F3 0x83
 #define KEY_F4 0x84
 #define KEY_F5 0x85
+#define KEY_F6 0x86
 
 #define KEY_NONE     0  //
 

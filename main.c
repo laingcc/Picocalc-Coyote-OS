@@ -50,6 +50,12 @@ void handle_keyboard() {
         case KEY_F5:
             ui_show_menu();
             break;
+        case KEY_F6:
+            if (active_idx == 3) {
+                // Graph mode - show graph context menu
+                ui_show_graph_menu();
+            }
+            break;
         case KEY_ENTER:
             if (active_idx == 3) {
                 // Graphing mode: we don't need the result, just add to history to trigger redraw

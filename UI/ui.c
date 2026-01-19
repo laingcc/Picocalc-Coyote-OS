@@ -13,9 +13,185 @@
 #include "pwm_sound/pwm_sound.h"
 #include "keyboard_definition.h"
 #include "text_mode.h"
+#include "dirent.h"
 
 #define MENU_WIDTH 22
 #define MENU_HEIGHT 6
+#define MAX_MENU_ITEMS 16
+#define MAX_GRAPH_FUNCTIONS 4
+
+// Graph function storage
+typedef struct {
+    char expression[INPUT_BUFFER_SIZE];
+    int color;
+    bool active;
+} GraphFunction;
+
+static GraphFunction graph_functions[MAX_GRAPH_FUNCTIONS];
+static const int graph_colors[MAX_GRAPH_FUNCTIONS] = {RED, BLUE, GREEN, MAGENTA};
+
+// Generic menu item structure
+typedef struct {
+    char label[32];
+} MenuItem;
+
+// Generic menu drawing - draws the box frame
+static void draw_menu_frame(int start_x, int start_y, int width, int height, const char* title) {
+    // Background
+    draw_rect_spi(start_x, start_y, start_x + width * 8, start_y + height * 12, BLACK);
+
+    // ASCII Border - top
+    lcd_set_text_color(WHITE, BLACK);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y);
+    for (int i = 1; i < width - 1; i++)
+        lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (width - 1) * 8, start_y);
+
+    // Sides
+    for (int i = 1; i < height - 1; i++) {
+        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x, start_y + i * 12);
+        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x + (width - 1) * 8, start_y + i * 12);
+    }
+
+    // Bottom
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y + (height - 1) * 12);
+    for (int i = 1; i < width - 1; i++)
+        lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y + (height - 1) * 12);
+    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (width - 1) * 8, start_y + (height - 1) * 12);
+
+    // Title
+    int title_len = strlen(title);
+    int title_x = start_x + (width * 8 - title_len * 8) / 2;
+    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x - 8, start_y);
+    for (int i = 0; i < title_len; i++)
+        lcd_print_char_at(WHITE, BLACK, title[i], 0, title_x + i * 8, start_y);
+    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x + title_len * 8, start_y);
+}
+
+// Draw a menu option with optional selection highlight
+static void draw_menu_option(int start_x, int start_y, int width, int row, const char* text, bool selected) {
+    int text_len = strlen(text);
+    int opt_x = start_x + (width * 8 - text_len * 8) / 2;
+    int opt_y = start_y + row * 12;
+
+    int fg = selected ? BLACK : WHITE;
+    int bg = selected ? WHITE : BLACK;
+
+    for (int i = 0; i < text_len; i++)
+        lcd_print_char_at(fg, bg, text[i], 0, opt_x + i * 8, opt_y);
+}
+
+// Draw text input field
+static void draw_input_field(int start_x, int start_y, int width, int row,
+                             const char* text, int max_display) {
+    int field_y = start_y + row * 12;
+    int field_x = start_x + 8;  // 1 char padding from border
+    int field_width = (width - 2) * 8;  // width minus borders
+
+    // Clear field area
+    draw_rect_spi(field_x, field_y, field_x + field_width, field_y + 12, BLACK);
+
+    // Draw text (inverted colors for input field)
+    int text_len = strlen(text);
+    int display_len = text_len > max_display ? max_display : text_len;
+    int display_start = text_len > max_display ? text_len - max_display : 0;
+
+    for (int i = 0; i < display_len; i++) {
+        lcd_print_char_at(BLACK, WHITE, text[display_start + i], 0, field_x + i * 8, field_y);
+    }
+    // Draw cursor
+    lcd_print_char_at(BLACK, WHITE, '_', 0, field_x + display_len * 8, field_y);
+}
+
+// Text input dialog - returns true if confirmed, false if cancelled
+// Result is stored in out_buffer (must be at least max_len bytes)
+static bool run_input_dialog(const char* title, char* out_buffer, int max_len) {
+    int width = MENU_WIDTH;
+    int height = 5;
+    int start_x = (LCD_WIDTH - width * 8) / 2;
+    int start_y = (LCD_HEIGHT - height * 12) / 2;
+    int max_display = width - 3;  // Leave room for borders and cursor
+
+    char input[64];
+    int input_len = 0;
+    input[0] = '\0';
+
+    draw_menu_frame(start_x, start_y, width, height, title);
+    draw_input_field(start_x, start_y, width, 2, input, max_display);
+
+    while (true) {
+        int c = lcd_getc(0);
+        if (c == KEY_ENTER) {
+            if (input_len > 0) {
+                strncpy(out_buffer, input, max_len - 1);
+                out_buffer[max_len - 1] = '\0';
+                return true;
+            }
+        } else if (c == KEY_ESC || (c == KEY_BACKSPACE && input_len == 0)) {
+            return false;
+        } else if (c == KEY_BACKSPACE) {
+            if (input_len > 0) {
+                input_len--;
+                input[input_len] = '\0';
+                draw_input_field(start_x, start_y, width, 2, input, max_display);
+            }
+        } else if (c >= 32 && c < 127 && input_len < max_len - 1 && input_len < 63) {
+            // Filter out invalid filename characters
+            if (c != '/' && c != '\\' && c != ':' && c != '*' &&
+                c != '?' && c != '"' && c != '<' && c != '>' && c != '|') {
+                input[input_len++] = (char)c;
+                input[input_len] = '\0';
+                draw_input_field(start_x, start_y, width, 2, input, max_display);
+            }
+        }
+        sleep_ms(20);
+    }
+}
+
+// Generic menu loop - returns selected item index, or -1 if cancelled
+static int run_menu_loop(int start_x, int start_y, int width, int height,
+                         const char* title, MenuItem* items, int item_count,
+                         int initial_selection) {
+    int selected = initial_selection;
+    bool exit_menu = false;
+
+    // Initial draw
+    draw_menu_frame(start_x, start_y, width, height, title);
+    for (int i = 0; i < item_count; i++) {
+        draw_menu_option(start_x, start_y, width, 2 + i, items[i].label, i == selected);
+    }
+
+    while (!exit_menu) {
+        int c = lcd_getc(0);
+        switch (c) {
+            case KEY_UP:
+                if (selected > 0) {
+                    selected--;
+                    for (int i = 0; i < item_count; i++) {
+                        draw_menu_option(start_x, start_y, width, 2 + i, items[i].label, i == selected);
+                    }
+                }
+                break;
+            case KEY_DOWN:
+                if (selected < item_count - 1) {
+                    selected++;
+                    for (int i = 0; i < item_count; i++) {
+                        draw_menu_option(start_x, start_y, width, 2 + i, items[i].label, i == selected);
+                    }
+                }
+                break;
+            case KEY_ENTER:
+                return selected;
+            case KEY_ESC:
+            case KEY_BACKSPACE:
+                return -1;
+            default:
+                break;
+        }
+        sleep_ms(20);
+    }
+    return -1;
+}
 
 int tab_count = MAX_TABS;
 int active_tab = 0;
@@ -120,6 +296,62 @@ void ui_add_to_history(int tab_idx, const char* expression, double result) {
     }
 }
 
+// Draw axes for graph
+static void draw_graph_axes() {
+    int mid_y = 154; // (14 + 294) / 2
+    int mid_x = 160;
+    draw_rect_spi(0, mid_y, 319, mid_y, GRAY);
+    draw_rect_spi(mid_x, 14, mid_x, 294, GRAY);
+}
+
+// Draw a single graph function with specified color
+static void draw_graph_function(const char* expression, int color) {
+    if (!expression || expression[0] == '\0') return;
+
+    double x_val;
+    te_variable vars[] = {{"x", &x_val}};
+    int err;
+    te_expr *expr = te_compile(expression, vars, 1, &err);
+
+    if (!expr) {
+        return;  // Silently fail for invalid expressions
+    }
+
+    int mid_y = 154;
+    int mid_x = 160;
+    double scale = 16.0;
+
+    int last_sy = -1;
+    for (int sx = 0; sx < 320; sx++) {
+        x_val = ((double)sx - mid_x) / scale;
+        double y_val = te_eval(expr);
+
+        if (isnan(y_val) || isinf(y_val)) {
+            last_sy = -1;
+            continue;
+        }
+
+        int sy = mid_y - (int)(y_val * scale);
+
+        if (sy >= 14 && sy <= 294) {
+            if (last_sy != -1) {
+                int y_start = last_sy < sy ? last_sy : sy;
+                int y_end = last_sy < sy ? sy : last_sy;
+                for (int y = y_start; y <= y_end; y++) {
+                    if (y >= 14 && y <= 294) spi_draw_pixel(sx, y, color);
+                }
+            } else {
+                spi_draw_pixel(sx, sy, color);
+            }
+            last_sy = sy;
+        } else {
+            last_sy = -1;
+        }
+    }
+
+    te_free(expr);
+}
+
 void ui_draw_graph(const char* expression) {
     if (!expression || expression[0] == '\0') return;
 
@@ -136,46 +368,52 @@ void ui_draw_graph(const char* expression) {
         lcd_print_string(err_msg);
         return;
     }
-
-    // Graph area: x [0, 319], y [14, 294]
-    int mid_y = 154; // (14 + 294) / 2
-    int mid_x = 160;
-    double scale = 16.0; // 10 units = 160 pixels
+    te_free(expr);
 
     // Draw axes
-    draw_rect_spi(0, mid_y, 319, mid_y, GRAY);
-    draw_rect_spi(mid_x, 14, mid_x, 294, GRAY);
+    draw_graph_axes();
 
-    int last_sy = -1;
-    for (int sx = 0; sx < 320; sx++) {
-        x_val = ((double)sx - mid_x) / scale;
-        double y_val = te_eval(expr);
-
-        if (isnan(y_val) || isinf(y_val)) {
-            last_sy = -1;
-            continue;
-        }
-
-        int sy = mid_y - (int)(y_val * scale);
-
-        if (sy >= 14 && sy <= 294) {
-            if (last_sy != -1) {
-                // Draw vertical line to connect points if needed
-                int y_start = last_sy < sy ? last_sy : sy;
-                int y_end = last_sy < sy ? sy : last_sy;
-                for (int y = y_start; y <= y_end; y++) {
-                    if (y >= 14 && y <= 294) spi_draw_pixel(sx, y, RED);
-                }
-            } else {
-                spi_draw_pixel(sx, sy, RED);
-            }
-            last_sy = sy;
-        } else {
-            last_sy = -1;
+    // Draw all active graph functions first
+    for (int i = 0; i < MAX_GRAPH_FUNCTIONS; i++) {
+        if (graph_functions[i].active) {
+            draw_graph_function(graph_functions[i].expression, graph_functions[i].color);
         }
     }
 
-    te_free(expr);
+    // Draw the current/main expression in red
+    draw_graph_function(expression, RED);
+}
+
+// Add a function to the graph
+bool ui_graph_add_function(const char* expression) {
+    // Find first empty slot
+    for (int i = 0; i < MAX_GRAPH_FUNCTIONS; i++) {
+        if (!graph_functions[i].active) {
+            strncpy(graph_functions[i].expression, expression, INPUT_BUFFER_SIZE - 1);
+            graph_functions[i].expression[INPUT_BUFFER_SIZE - 1] = '\0';
+            graph_functions[i].color = graph_colors[i];
+            graph_functions[i].active = true;
+            return true;
+        }
+    }
+    return false;  // No empty slots
+}
+
+// Clear all graph functions
+void ui_graph_clear_all() {
+    for (int i = 0; i < MAX_GRAPH_FUNCTIONS; i++) {
+        graph_functions[i].active = false;
+        graph_functions[i].expression[0] = '\0';
+    }
+}
+
+// Get count of active graph functions
+int ui_graph_get_count() {
+    int count = 0;
+    for (int i = 0; i < MAX_GRAPH_FUNCTIONS; i++) {
+        if (graph_functions[i].active) count++;
+    }
+    return count;
 }
 
 void ui_redraw_input_only() {
@@ -239,124 +477,24 @@ void reboot_to_bootloader() {
     reset_usb_boot(1, 0);
 }
 
-static void draw_menu(int selected_item) {
-    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
-    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
-
-    // Background
-    draw_rect_spi(start_x, start_y, start_x + MENU_WIDTH * 8, start_y + MENU_HEIGHT * 12, BLACK);
-
-    // ASCII Border
-    lcd_set_text_color(WHITE, BLACK);
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y);
-    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y);
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y);
-
-    for (int i = 1; i < MENU_HEIGHT - 1; i++) {
-        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x, start_y + i * 12);
-        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + i * 12);
-    }
-
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y + (MENU_HEIGHT - 1) * 12);
-    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y + (MENU_HEIGHT - 1) * 12);
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + (MENU_HEIGHT - 1) * 12);
-
-    // Menu Title
-    char* title = " SETTINGS ";
-    int title_x = start_x + (MENU_WIDTH * 8 - strlen(title) * 8) / 2;
-    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x - 8, start_y);
-    for (int i = 0; i < (int)strlen(title); i++) lcd_print_char_at(WHITE, BLACK, title[i], 0, title_x + i * 8, start_y);
-    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x + (int)strlen(title) * 8, start_y);
-
-    // Options
-    char opt1[32];
-    snprintf(opt1, sizeof(opt1), " %s Beeps ", sound_is_enabled() ? "Disable" : "Enable ");
-    char* opt2 = " Reboot to Bootloader ";
-
-    int opt1_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt1) * 8) / 2;
-    int opt2_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt2) * 8) / 2;
-
-    for (int i = 0; i < (int)strlen(opt1); i++) lcd_print_char_at(selected_item == 0 ? BLACK : WHITE, selected_item == 0 ? WHITE : BLACK, opt1[i], 0, opt1_x + i * 8, start_y + 2 * 12);
-    for (int i = 0; i < (int)strlen(opt2); i++) lcd_print_char_at(selected_item == 1 ? BLACK : WHITE, selected_item == 1 ? WHITE : BLACK, opt2[i], 0, opt2_x + i * 8, start_y + 3 * 12);
-}
-
-static void draw_mode_menu(int selected_item) {
-    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
-    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
-
-    // Background
-    draw_rect_spi(start_x, start_y, start_x + MENU_WIDTH * 8, start_y + MENU_HEIGHT * 12, BLACK);
-
-    // ASCII Border
-    lcd_set_text_color(WHITE, BLACK);
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y);
-    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y);
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y);
-
-    for (int i = 1; i < MENU_HEIGHT - 1; i++) {
-        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x, start_y + i * 12);
-        lcd_print_char_at(WHITE, BLACK, '|', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + i * 12);
-    }
-
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x, start_y + (MENU_HEIGHT - 1) * 12);
-    for (int i = 1; i < MENU_WIDTH - 1; i++) lcd_print_char_at(WHITE, BLACK, '-', 0, start_x + i * 8, start_y + (MENU_HEIGHT - 1) * 12);
-    lcd_print_char_at(WHITE, BLACK, '+', 0, start_x + (MENU_WIDTH - 1) * 8, start_y + (MENU_HEIGHT - 1) * 12);
-
-    // Menu Title
-    char* title = " MODE ";
-    int title_x = start_x + (MENU_WIDTH * 8 - strlen(title) * 8) / 2;
-    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x - 8, start_y);
-    for (int i = 0; i < (int)strlen(title); i++) lcd_print_char_at(WHITE, BLACK, title[i], 0, title_x + i * 8, start_y);
-    lcd_print_char_at(WHITE, BLACK, ' ', 0, title_x + (int)strlen(title) * 8, start_y);
-
-    // Options
-    char* opt1 = " Text ";
-    char* opt2 = " Calculator ";
-
-    int opt1_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt1) * 8) / 2;
-    int opt2_x = start_x + (MENU_WIDTH * 8 - (int)strlen(opt2) * 8) / 2;
-
-    for (int i = 0; i < (int)strlen(opt1); i++) lcd_print_char_at(selected_item == 0 ? BLACK : WHITE, selected_item == 0 ? WHITE : BLACK, opt1[i], 0, opt1_x + i * 8, start_y + 2 * 12);
-    for (int i = 0; i < (int)strlen(opt2); i++) lcd_print_char_at(selected_item == 1 ? BLACK : WHITE, selected_item == 1 ? WHITE : BLACK, opt2[i], 0, opt2_x + i * 8, start_y + 3 * 12);
-}
-
 void ui_show_mode_menu() {
-    int selected = (current_mode == MODE_TEXT) ? 0 : 1;
-    bool exit_menu = false;
-    draw_mode_menu(selected);
+    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
+    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
 
-    while (!exit_menu) {
-        int c = lcd_getc(0);
-        switch (c) {
-            case KEY_UP:
-                if (selected > 0) {
-                    selected--;
-                    draw_mode_menu(selected);
-                }
-                break;
-            case KEY_DOWN:
-                if (selected < 1) {
-                    selected++;
-                    draw_mode_menu(selected);
-                }
-                break;
-            case KEY_ENTER:
-                if (selected == 0) {
-                    ui_set_current_mode(MODE_TEXT);
-                } else if (selected == 1) {
-                    ui_set_current_mode(MODE_CALCULATOR);
-                }
-                exit_menu = true;
-                break;
-            case KEY_ESC:
-            case KEY_BACKSPACE:
-                exit_menu = true;
-                break;
-            default:
-                break;
-        }
-        sleep_ms(20);
+    MenuItem items[2];
+    strcpy(items[0].label, " Text ");
+    strcpy(items[1].label, " Calculator ");
+
+    int initial = (current_mode == MODE_TEXT) ? 0 : 1;
+    int selected = run_menu_loop(start_x, start_y, MENU_WIDTH, MENU_HEIGHT,
+                                  " MODE ", items, 2, initial);
+
+    if (selected == 0) {
+        ui_set_current_mode(MODE_TEXT);
+    } else if (selected == 1) {
+        ui_set_current_mode(MODE_CALCULATOR);
     }
+
     if (current_mode == MODE_CALCULATOR) {
         ui_redraw_tab_content();
     } else {
@@ -365,41 +503,115 @@ void ui_show_mode_menu() {
 }
 
 void ui_show_menu() {
-    int selected = 0;
-    bool exit_menu = false;
-    draw_menu(selected);
+    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
+    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
 
-    while (!exit_menu) {
-        int c = lcd_getc(0);
-        switch (c) {
-            case KEY_UP:
-                if (selected > 0) {
-                    selected--;
-                    draw_menu(selected);
-                }
-                break;
-            case KEY_DOWN:
-                if (selected < 1) {
-                    selected++;
-                    draw_menu(selected);
-                }
-                break;
-            case KEY_ENTER:
-                if (selected == 0) {
-                    sound_set_enabled(!sound_is_enabled());
-                    draw_menu(selected);
-                } else if (selected == 1) {
-                    reboot_to_bootloader();
-                }
-                break;
-            case KEY_ESC:
-            case KEY_BACKSPACE:
-                exit_menu = true;
-                break;
-            default:
-                break;
+    MenuItem items[2];
+    bool done = false;
+
+    while (!done) {
+        snprintf(items[0].label, sizeof(items[0].label), " %s Beeps ",
+                 sound_is_enabled() ? "Disable" : "Enable ");
+        strcpy(items[1].label, " Reboot to Bootloader ");
+
+        int selected = run_menu_loop(start_x, start_y, MENU_WIDTH, MENU_HEIGHT,
+                                      " SETTINGS ", items, 2, 0);
+
+        if (selected == 0) {
+            sound_set_enabled(!sound_is_enabled());
+            // Stay in menu to show updated label
+        } else if (selected == 1) {
+            reboot_to_bootloader();
+        } else {
+            done = true;
         }
-        sleep_ms(20);
     }
+    ui_redraw_tab_content();
+}
+
+bool ui_show_file_menu(const char* directory, char* out_filename, int max_len) {
+    MenuItem items[MAX_MENU_ITEMS];
+    char filenames[MAX_MENU_ITEMS][32];  // Store actual filenames without padding
+    int item_count = 0;
+    bool has_files = false;
+
+    DIR *dir = opendir(directory);
+    if (dir != NULL) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL && item_count < MAX_MENU_ITEMS) {
+            // Skip . and ..
+            if (entry->d_name[0] == '.' &&
+                (entry->d_name[1] == '\0' ||
+                 (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+                continue;
+            }
+            // Store actual filename
+            strncpy(filenames[item_count], entry->d_name, 31);
+            filenames[item_count][31] = '\0';
+            // Format for display with padding
+            snprintf(items[item_count].label, sizeof(items[item_count].label),
+                     " %.28s ", entry->d_name);
+            item_count++;
+            has_files = true;
+        }
+        closedir(dir);
+    }
+
+    if (item_count == 0) {
+        strcpy(items[0].label, " (empty) ");
+        item_count = 1;
+    }
+
+    // Calculate menu dimensions - height adjusts to content
+    int menu_height = item_count + 3;  // 2 for border + 1 for padding
+    if (menu_height > 20) menu_height = 20;
+
+    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
+    int start_y = (LCD_HEIGHT - menu_height * 12) / 2;
+
+    int selected = run_menu_loop(start_x, start_y, MENU_WIDTH, menu_height,
+                                  " FILES ", items, item_count, 0);
+
+    if (selected >= 0 && has_files && out_filename != NULL) {
+        strncpy(out_filename, filenames[selected], max_len - 1);
+        out_filename[max_len - 1] = '\0';
+        return true;
+    }
+
+    return false;
+}
+
+bool ui_show_save_prompt(char* out_filename, int max_len) {
+    bool result = run_input_dialog(" SAVE AS ", out_filename, max_len);
+    return result;
+}
+
+void ui_show_graph_menu() {
+    int start_x = (LCD_WIDTH - MENU_WIDTH * 8) / 2;
+    int start_y = (LCD_HEIGHT - MENU_HEIGHT * 12) / 2;
+
+    MenuItem items[3];
+    strcpy(items[0].label, " Add Current Function ");
+    strcpy(items[1].label, " Clear All Functions ");
+    strcpy(items[2].label, " Cancel ");
+
+    int selected = run_menu_loop(start_x, start_y, MENU_WIDTH, MENU_HEIGHT,
+                                  " GRAPH ", items, 3, 0);
+
+    TabContext* ctx = ui_get_tab_context(3);  // Graph tab
+
+    if (selected == 0) {
+        // Add current function from last history entry
+        if (ctx->history_count > 0) {
+            if (!ui_graph_add_function(ctx->history[ctx->history_count - 1].expression)) {
+                // Could show "slots full" message, but just silently fail for now
+            }
+        }
+    } else if (selected == 1) {
+        // Clear all functions
+        ui_graph_clear_all();
+    }
+    // selected == 2 or -1 means cancel, do nothing
+
     ui_redraw_tab_content();
 }

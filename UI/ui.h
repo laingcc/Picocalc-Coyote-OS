@@ -37,6 +37,14 @@ void ui_redraw_tab_content();
 void ui_redraw_input_only();
 void ui_show_menu();
 void ui_show_mode_menu();
+bool ui_show_file_menu(const char* directory, char* out_filename, int max_len);
+bool ui_show_save_prompt(char* out_filename, int max_len);
+void ui_show_graph_menu();
+
+// Graph functions management
+bool ui_graph_add_function(const char* expression);
+void ui_graph_clear_all();
+int ui_graph_get_count();
 
 typedef enum {
     MODE_CALCULATOR,
