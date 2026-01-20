@@ -9,8 +9,8 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 include_directories(
-  ${CMAKE_CURRENT_LIST_DIR}
-   ${CMAKE_CURRENT_LIST_DIR}/gifenc
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/gifenc
 )
 
 add_subdirectory(i2ckbd)
@@ -19,17 +19,20 @@ add_subdirectory(pwm_sound)
 add_subdirectory(pico-vfs)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/rp2040-psram rp2040-psram)
 
-add_executable(coyote
-	main.c
-        utils.c
-         gifenc/gifenc.c
-         gif_utils.c
-        UI/ui.c
-        text_mode.c
-        keyboard_definition.h
-        tinyexpr/tinyexpr.c
-        config.h
+set(COYOTE_SOURCES
+    main.c
+    utils.c
+    gif_utils.c
+    gifenc/gifenc.c
+    UI/ui.c
+    text_mode.c
+    tinyexpr/tinyexpr.c
 )
+
+add_executable(coyote ${COYOTE_SOURCES})
+
+# Map POSIX calls in gifenc to our shims
+set_source_files_properties(gifenc/gifenc.c PROPERTIES COMPILE_DEFINITIONS "creat=ge_creat;write=ge_write;close=ge_close")
 
 ##picocalc spi0
 target_compile_definitions(coyote PRIVATE
@@ -52,17 +55,16 @@ target_link_libraries(coyote PRIVATE
     hardware_spi
     hardware_dma
     hardware_exception
-	hardware_pio
+    hardware_pio
     pico_multicore
-	i2ckbd
-	lcdspi
+    i2ckbd
+    lcdspi
     rp2040-psram
-	pwm_sound
+    pwm_sound
     blockdevice_sd
     filesystem_fat
     filesystem_vfs
-	)
-
+)
 
 pico_enable_stdio_usb(coyote 0)
 pico_enable_stdio_uart(coyote 1)

@@ -107,7 +107,7 @@ static int run_menu(int x, int y, int w, int h, const char* title, MenuItem* ite
     }
 }
 
-void draw() {
+static void draw() {
     lcd_clear();
     draw_rect_spi(0, 295, 320, 320, WHITE);
     for (int i = 0; i < tab_count; i++) {

@@ -31,8 +31,13 @@ void ui_add_to_history(int tab_idx, const char* expression, double result);
 void ui_redraw_tab_content();
 void ui_redraw_input_only();
 void ui_show_menu();
-void ui_show_graph_menu();
 void ui_show_mode_menu();
+void ui_show_graph_menu();
+bool ui_show_file_menu(const char* directory, char* out_filename, int max_len);
+bool ui_show_save_prompt(char* out_filename, int max_len);
 app_mode_t ui_get_current_mode();
+void ui_set_current_mode(app_mode_t mode);
+bool ui_graph_add_function(const char* expression);
+void ui_graph_clear_all();
 
-#endif //COYOTE_UI_H
+#endif

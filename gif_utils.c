@@ -14,20 +14,20 @@
 
 static FILE* gif_file = NULL;
 
-int creat(const char *path, mode_t mode) {
+int ge_creat(const char *path, mode_t mode) {
     gif_file = fopen(path, "wb");
     if (gif_file) return 42; // Return a dummy file descriptor
     return -1;
 }
 
-ssize_t write(int fd, const void *buf, size_t count) {
+ssize_t ge_write(int fd, const void *buf, size_t count) {
     if (fd == 42 && gif_file) {
         return fwrite(buf, 1, count, gif_file);
     }
     return -1;
 }
 
-int close(int fd) {
+int ge_close(int fd) {
     if (fd == 42 && gif_file) {
         fclose(gif_file);
         gif_file = NULL;
