@@ -1,6 +1,16 @@
-# PicoCalc Firmware
- This is a basic firmware for the PicoCalc, currently it is essentially just a wrapper
-around tinyexpr which provides a calculator functionality with a simple UI on the PicoCalc hardware.
+# Coyote OS for PicoCalc
+Basic Calculator Firmware for PicoCalc. It uses Tinyexpr to evaluate expressions in calculator mode.
+
+![calculator mode](/assets/scr_000.bmp)
+
+Also includes a simple graphing mode
+
+![graphing mode](/assets/scr_001.bmp)
+
+Also includes a simple text mode, with file saving/loading from the SD card. 
+Text mode can be accessed by pressing "Shift + Tab", which will pop up a menu. 
+
+The calculator can also be rebooted to bootloader by pressing F5, and selecting the reboot option. 
 
 
 ## Building
@@ -56,18 +66,11 @@ So here is the standard running procedures:
 If your firmware includes serial output, you can monitor it using **minicom**, **screen**, or the Arduino IDE serial monitor.  
 See instructions above for connecting and selecting the correct serial port.
 
-## Project Structure
-
-- `lcdspi/` - SPI LCD display driver and rendering functions
-- `keyboard/` - I2C keyboard scanning and input
-- `psram/` - PSRAM memory access routines
-- `main.c` - Example usage and hardware initialization
 
 ## Requirements
 
 - Raspberry Pi Pico
-- PicoCalc hardware (LCD, keyboard, PSRAM)
-- [Pico SDK](https://github.com/raspberrypi/pico-sdk)
+- PicoCalc hardware
 
 ## License
 
