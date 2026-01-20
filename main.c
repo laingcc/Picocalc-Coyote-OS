@@ -12,6 +12,7 @@
 #include "pwm_sound/pwm_sound.h"
 #include "config.h"
 #include "utils.h"
+#include "gif_utils.h"
 
 #include "blockdevice/sd.h"
 #include "filesystem/fat.h"
@@ -34,6 +35,10 @@ void handle_keyboard() {
         draw();
         ui_redraw_tab_content();
         take_screenshot(active_directory);
+        return;
+    }
+    if (ctrl && c == 'g') {
+        gif_recording_toggle();
         return;
     }
 
@@ -138,6 +143,7 @@ int main() {
     bool test = fs_init();
     if (test) {
         // lcd_print_string("Filesystem initialized\n");
+        gif_recording_init(active_directory);
         DIR *dir = opendir(active_directory);
         if (dir == NULL) {
             lcd_print_string("Main Coyote Directory Not Found, Creating...\n");
@@ -152,6 +158,14 @@ int main() {
 
     while (1) {
         handle_keyboard();
+        gif_recording_update();
+        if (gif_is_recording()) {
+            // Draw a small red dot in the top left corner to indicate recording
+            spi_draw_pixel(0, 0, RED);
+            spi_draw_pixel(1, 0, RED);
+            spi_draw_pixel(0, 1, RED);
+            spi_draw_pixel(1, 1, RED);
+        }
         sleep_ms(20);
     }
 }
