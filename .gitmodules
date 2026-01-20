@@ -1,3 +1,6 @@
 [submodule "tinyexpr"]
 	path = tinyexpr
 	url = https://github.com/codeplea/tinyexpr.git
+[submodule "gifenc"]
+	path = gifenc
+	url = https://github.com/lecram/gifenc.git

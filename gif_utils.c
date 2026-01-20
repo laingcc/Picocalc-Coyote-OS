@@ -4,9 +4,37 @@
 #include <math.h>
 #include "pico/stdlib.h"
 #include "gif_utils.h"
-#include "gifenc.h"
+#include "gifenc/gifenc.h"
 #include "lcdspi/lcdspi.h"
 #include "pwm_sound/pwm_sound.h"
+
+// Compatibility layer for gifenc which uses POSIX IO
+#include <fcntl.h>
+#include <unistd.h>
+
+static FILE* gif_file = NULL;
+
+int creat(const char *path, mode_t mode) {
+    gif_file = fopen(path, "wb");
+    if (gif_file) return 42; // Return a dummy file descriptor
+    return -1;
+}
+
+ssize_t write(int fd, const void *buf, size_t count) {
+    if (fd == 42 && gif_file) {
+        return fwrite(buf, 1, count, gif_file);
+    }
+    return -1;
+}
+
+int close(int fd) {
+    if (fd == 42 && gif_file) {
+        fclose(gif_file);
+        gif_file = NULL;
+        return 0;
+    }
+    return -1;
+}
 
 static bool recording = false;
 static ge_GIF *gif = NULL;

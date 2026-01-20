@@ -10,6 +10,7 @@ pico_sdk_init()
 
 include_directories(
   ${CMAKE_CURRENT_LIST_DIR}
+   ${CMAKE_CURRENT_LIST_DIR}/gifenc
 )
 
 add_subdirectory(i2ckbd)
@@ -21,7 +22,7 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/rp2040-psram rp2040-psram)
 add_executable(coyote
 	main.c
         utils.c
-         gifenc.c
+         gifenc/gifenc.c
          gif_utils.c
         UI/ui.c
         keyboard_definition.h
