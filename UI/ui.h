@@ -1,7 +1,3 @@
-//
-// Created by chuck on 2025-12-19.
-//
-
 #ifndef COYOTE_UI_H
 #define COYOTE_UI_H
 
@@ -24,18 +20,19 @@ typedef struct {
     int input_index;
 } TabContext;
 
+typedef enum { MODE_CALCULATOR, MODE_TEXT } app_mode_t;
+
 void ui_init();
 void draw();
-
-void update_tab_count(int new_count);
 void update_active_tab(int new_tab);
-void reboot_to_bootloader();
-
 TabContext* ui_get_tab_context(int tab_idx);
 int ui_get_active_tab_idx();
 void ui_add_to_history(int tab_idx, const char* expression, double result);
 void ui_redraw_tab_content();
 void ui_redraw_input_only();
 void ui_show_menu();
+void ui_show_graph_menu();
+void ui_show_mode_menu();
+app_mode_t ui_get_current_mode();
 
 #endif //COYOTE_UI_H

@@ -25,6 +25,7 @@ add_executable(coyote
          gifenc/gifenc.c
          gif_utils.c
         UI/ui.c
+        text_mode.c
         keyboard_definition.h
         tinyexpr/tinyexpr.c
         config.h
