@@ -1,3 +1,6 @@
 [submodule "tinyexpr"]
 	path = tinyexpr
 	url = https://github.com/codeplea/tinyexpr.git
+[submodule "pico-vfs"]
+	path = pico-vfs
+	url = http://https://github.com/oyama/pico-vfs
