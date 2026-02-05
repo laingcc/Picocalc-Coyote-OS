@@ -1,0 +1,58 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential
+
+      - name: Clone Pico SDK
+        run: |
+          git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git
+          cd pico-sdk
+          git submodule update --init
+
+      - name: Build
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DPICO_SDK_PATH=${{ github.workspace }}/pico-sdk
+          make -j$(nproc)
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get commit date
+        id: date
+        run: echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.date.outputs.date }}-${{ steps.sha.outputs.short }}
+          name: Build ${{ steps.date.outputs.date }} (${{ steps.sha.outputs.short }})
+          body: |
+            Automated build from commit ${{ github.sha }}
+
+            **Commit message:** ${{ github.event.head_commit.message }}
+          files: build/coyote.uf2
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
