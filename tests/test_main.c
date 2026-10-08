@@ -1,0 +1,21 @@
+#include <stdio.h>
+
+#include "test_util.h"
+
+int g_tests_run = 0;
+int g_tests_failed = 0;
+
+void test_json_stream(void);
+void test_http_parser(void);
+void test_ollama_provider(void);
+void test_chat_model(void);
+
+int main(void) {
+    test_json_stream();
+    test_http_parser();
+    test_ollama_provider();
+    test_chat_model();
+
+    printf("%d checks, %d failures\n", g_tests_run, g_tests_failed);
+    return g_tests_failed == 0 ? 0 : 1;
+}
