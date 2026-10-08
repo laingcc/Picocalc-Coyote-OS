@@ -14,7 +14,9 @@ typedef struct {
     json_stream_t *stream;
     size_t events;
     size_t done_events;
+    size_t error_events;
     int nested_finish;
+    int nested_error_finish;
 } reentrant_log_t;
 
 static void collect(void *context, const json_stream_event_t *event) {
@@ -39,6 +41,11 @@ static void collect_reentrant(void *context, const json_stream_event_t *event) {
         log->done_events++;
         if (log->done_events == 1u) {
             log->nested_finish = json_stream_finish(log->stream);
+        }
+    } else if (event->type == JSON_STREAM_EVENT_ERROR) {
+        log->error_events++;
+        if (log->error_events == 1u) {
+            log->nested_error_finish = json_stream_finish(log->stream);
         }
     }
 }
@@ -408,6 +415,23 @@ static void check_terminal_state_is_latched_before_callback(void) {
     CHECK(json_stream_finish(&stream) == 0);
 }
 
+static void check_error_state_is_latched_before_callback(void) {
+    const char *error = "{\"error\":\"boom\"}\n";
+    json_stream_t stream;
+    reentrant_log_t log;
+
+    memset(&log, 0, sizeof(log));
+    log.stream = &stream;
+    log.nested_error_finish = 0;
+    json_stream_init(&stream, collect_reentrant, &log);
+    CHECK(json_stream_feed(&stream, error, strlen(error)) == 0);
+    CHECK(log.nested_error_finish == -1);
+    CHECK(log.events == 1u);
+    CHECK(log.error_events == 1u);
+    CHECK(json_stream_failed(&stream));
+    CHECK(json_stream_finish(&stream) == -1);
+}
+
 static void check_null_preconditions(void) {
     event_log_t log;
     json_stream_t stream;
@@ -438,6 +462,7 @@ void test_json_stream(void) {
     check_oversized_and_truncated();
     check_terminal_semantics();
     check_terminal_state_is_latched_before_callback();
+    check_error_state_is_latched_before_callback();
     check_embedded_nul();
     check_null_preconditions();
 }
