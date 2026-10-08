@@ -560,6 +560,36 @@ static void check_title_truncation(void) {
     CHECK_STR_EQ(chat_model_message_at(&loaded, 0)->text, "msg");
 }
 
+static void check_marker_round_trip(void) {
+    chat_model_t saved;
+    chat_model_t loaded;
+
+    clean();
+    chat_model_init(&saved, NULL, NULL, 0u);
+    chat_model_init(&loaded, NULL, NULL, 0u);
+
+    /* Text whose lines collide with the file format's section markers, plus a
+     * leading-backslash line, must survive a save/load round-trip verbatim. */
+    const char *msg =
+        "Before\n"
+        "[message]\n"
+        "middle\n"
+        "[conversation]\n"
+        "\\backslash\n"
+        "[end]\n";
+    CHECK(chat_model_append_message(&saved, CHAT_ROLE_USER, msg, strlen(msg)) == 0);
+
+    CHECK(conv_store_save(&saved, "Markers", test_dir) == CONV_STORE_OK);
+    CHECK(conv_store_load(&loaded, "Markers", test_dir) == CONV_STORE_OK);
+
+    CHECK(chat_model_message_count(&loaded) == 1u);
+    const chat_message_t *m = chat_model_message_at(&loaded, 0);
+    CHECK(m != NULL);
+    CHECK(m->role == CHAT_ROLE_USER);
+    CHECK(m->length == strlen(msg));
+    CHECK_STR_EQ(m->text, msg);
+}
+
 void test_conv_store(void) {
     check_arguments();
     check_empty_transcript_save_rejected();
@@ -575,5 +605,6 @@ void test_conv_store(void) {
     check_failed_rename_keeps_original();
     check_backup_fallback();
     check_title_truncation();
+    check_marker_round_trip();
     clean();
 }

@@ -173,6 +173,40 @@ static int write_line(FILE *f, const char *line) {
     return write_str(f, "\n");
 }
 
+static int write_message_text(FILE *f, const char *text, size_t length) {
+    /* Emit the message body after "text=" line by line.  The first line needs no
+     * escape (the "text=" prefix already disambiguates it); later lines that start
+     * with '[' or '\' are prefixed with '\' so the reader can tell literal content
+     * from the [message]/[conversation] markers. */
+    const char *p = text;
+    const char *end = text + length;
+    int first = 1;
+    while (p <= end) {
+        const char *nl = p;
+        while (nl < end && *nl != '\n') {
+            nl++;
+        }
+        size_t line_len = (size_t)(nl - p);
+        if (!first && line_len > 0u && (p[0] == '[' || p[0] == '\\')) {
+            if (write_str(f, "\\") != 0) {
+                return -1;
+            }
+        }
+        first = 0;
+        if (write_bytes(f, p, line_len) != 0) {
+            return -1;
+        }
+        if (write_str(f, "\n") != 0) {
+            return -1;
+        }
+        if (nl == end) {
+            break;
+        }
+        p = nl + 1;
+    }
+    return 0;
+}
+
 static int write_conversation(FILE *f, const chat_model_t *model, const char *title) {
     if (write_str(f, "[conversation]\ntitle=") != 0) {
         return -1;
@@ -207,10 +241,7 @@ static int write_conversation(FILE *f, const chat_model_t *model, const char *ti
         if (write_str(f, "text=") != 0) {
             return -1;
         }
-        if (write_bytes(f, m->text, m->length) != 0) {
-            return -1;
-        }
-        if (write_str(f, "\n") != 0) {
+        if (write_message_text(f, m->text, m->length) != 0) {
             return -1;
         }
     }
@@ -276,16 +307,22 @@ static conv_store_status_t parse_messages(file_reader_t *r, chat_model_t *model,
                     return CONV_STORE_CORRUPT;
                 }
             } else {
-                if (strcmp(line_buf, "[message]") == 0 || strcmp(line_buf, "[conversation]") == 0) {
+                const char *content = line_buf;
+                size_t content_len = len;
+                if (content_len > 0u && content[0] == '\\') {
+                    /* Escaped literal line: drop the '\' and keep the rest. */
+                    content++;
+                    content_len--;
+                } else if (strcmp(line_buf, "[message]") == 0 || strcmp(line_buf, "[conversation]") == 0) {
                     break;
                 }
-                if (msg_len + 1u + len > CHAT_MESSAGE_MAX) {
+                if (msg_len + 1u + content_len > CHAT_MESSAGE_MAX) {
                     return CONV_STORE_TOO_LARGE;
                 }
                 msg_buf[msg_len++] = '\n';
-                if (len > 0u) {
-                    memcpy(msg_buf + msg_len, line_buf, len);
-                    msg_len += len;
+                if (content_len > 0u) {
+                    memcpy(msg_buf + msg_len, content, content_len);
+                    msg_len += content_len;
                 }
                 msg_buf[msg_len] = '\0';
             }
