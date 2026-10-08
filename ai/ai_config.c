@@ -33,7 +33,7 @@ ai_config_status_t ai_config_init(ai_config_t *config) {
     memset(config, 0, sizeof(*config));
     config->version = AI_CONFIG_VERSION;
     memcpy(config->provider, "ollama", sizeof("ollama"));
-    memcpy(config->host, "wang.local", sizeof("wang.local"));
+    /* No default host: a fresh device is unconfigured until one is entered. */
     config->port = 11434u;
     config->connect_timeout_ms = 15000u;
     config->request_timeout_ms = 120000u;
@@ -360,7 +360,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         !serializable_text(config->password, sizeof(config->password), 1) ||
         !serializable_text(config->provider, sizeof(config->provider), 0) ||
         (strcmp(config->provider, "ollama") != 0 && strcmp(config->provider, "muse") != 0) ||
-        !serializable_text(config->host, sizeof(config->host), 0) ||
+        !serializable_text(config->host, sizeof(config->host), 1) ||
         !serializable_text(config->model, sizeof(config->model), 1) ||
         !serializable_text(config->bearer_token, sizeof(config->bearer_token), 1) ||
         config->port == 0u ||
@@ -380,7 +380,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("ssid=\n") - 1u + strlen(config->ssid) +
                sizeof("password=\n") - 1u + strlen(config->password) +
                sizeof("provider=\n") - 1u + strlen(config->provider) +
-               sizeof("host=\n") - 1u + strlen(config->host) +
+               (config->host[0] != '\0' ? sizeof("host=\n") - 1u + strlen(config->host) : 0u) +
                sizeof("port=\n") - 1u + decimal_length(config->port) +
                sizeof("model=\n") - 1u + strlen(config->model) +
                sizeof("bearer_token=\n") - 1u + strlen(config->bearer_token) +
@@ -410,7 +410,10 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
     APPEND_FIELD("ssid", config->ssid);
     APPEND_FIELD("password", config->password);
     APPEND_FIELD("provider", config->provider);
-    APPEND_FIELD("host", config->host);
+    /* An unset host is left out: the parser refuses an empty "host=". */
+    if (config->host[0] != '\0') {
+        APPEND_FIELD("host", config->host);
+    }
     APPEND_NUMBER_FIELD("port", config->port);
     APPEND_FIELD("model", config->model);
     APPEND_FIELD("bearer_token", config->bearer_token);

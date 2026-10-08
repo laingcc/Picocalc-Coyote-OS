@@ -31,6 +31,7 @@ add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/ai/chat_layout.c"
     "${COYOTE_ROOT}/ai/http_stream.c"
     "${COYOTE_ROOT}/ai/wifi_manager.c"
+    "${COYOTE_ROOT}/ai/wifi_scan.c"
 )
 # The store's rename goes through a test double so the tests can fail it and
 # imitate FAT, which will not rename over an existing file.
@@ -53,6 +54,7 @@ add_executable(coyote_ai_tests
     test_ai_config.c
     test_config_store.c
     test_http_stream.c
+    test_wifi_scan.c
 )
 target_link_libraries(coyote_ai_tests PRIVATE coyote_ai)
 target_compile_options(coyote_ai_tests PRIVATE -Wall -Wextra -Werror)

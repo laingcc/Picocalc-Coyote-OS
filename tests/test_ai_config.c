@@ -29,7 +29,7 @@ static void check_defaults(void) {
     CHECK_STR_EQ(config.ssid, "");
     CHECK_STR_EQ(config.password, "");
     CHECK_STR_EQ(config.provider, "ollama");
-    CHECK_STR_EQ(config.host, "wang.local");
+    CHECK_STR_EQ(config.host, "");
     CHECK(config.port == 11434u);
     CHECK_STR_EQ(config.model, "");
     CHECK_STR_EQ(config.bearer_token, "");
@@ -77,7 +77,19 @@ static void check_serialize_defaults(void) {
         "ssid=\n"
         "password=\n"
         "provider=ollama\n"
-        "host=wang.local\n"
+        "port=11434\n"
+        "model=\n"
+        "bearer_token=\n"
+        "connect_timeout_ms=15000\n"
+        "request_timeout_ms=120000\n"
+        "idle_timeout_ms=15000\n"
+        "max_predict=384\n";
+    static const char expected_with_host[] =
+        "version=1\n"
+        "ssid=\n"
+        "password=\n"
+        "provider=ollama\n"
+        "host=example.local\n"
         "port=11434\n"
         "model=\n"
         "bearer_token=\n"
@@ -86,13 +98,27 @@ static void check_serialize_defaults(void) {
         "idle_timeout_ms=15000\n"
         "max_predict=384\n";
     ai_config_t config;
-    char output[sizeof(expected)];
+    ai_config_t reloaded;
+    ai_config_parser_t parser;
+    char output[sizeof(expected_with_host)];
     size_t length = 0u;
 
+    /* The default host is unset and is left out of the file, so the defaults
+     * survive a save and reload. */
     CHECK(ai_config_init(&config) == AI_CONFIG_OK);
     CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_OK);
     CHECK(length == sizeof(expected) - 1u);
     CHECK(strcmp(output, expected) == 0);
+    CHECK(parse_text(&reloaded, &parser, output, 7u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.host, "");
+    CHECK(reloaded.port == 11434u);
+
+    strcpy(config.host, "example.local");
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_OK);
+    CHECK(length == sizeof(expected_with_host) - 1u);
+    CHECK(strcmp(output, expected_with_host) == 0);
+    CHECK(parse_text(&reloaded, &parser, output, 7u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.host, "example.local");
 }
 
 static void check_line_forms_and_unknown_keys(void) {

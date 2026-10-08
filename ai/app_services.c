@@ -23,6 +23,7 @@ static struct {
     bool polling;
     ai_config_t config;
     wifi_manager_t wifi;
+    wifi_scan_t scan;
     http_stream_t stream;
     ollama_provider_t provider;
     provider_event_callback_t callback;
@@ -90,6 +91,58 @@ static wifi_link_t radio_link_status(void *context) {
         case CYW43_LINK_DOWN:
         default:
             return WIFI_LINK_DOWN;
+    }
+}
+
+/* ---- CYW43 scan adapter ------------------------------------------------ */
+
+/*
+ * A scan needs the radio up, which the station only does once it has an SSID,
+ * so the scan powers it when it has to.  scan_radio is set from the start of
+ * a scan until the driver has finished with it; scan_settle then hands the
+ * radio back, powering it down again unless the station took it meanwhile.
+ */
+static bool scan_radio;
+
+static int scan_on_result(void *env, const cyw43_ev_scan_result_t *result) {
+    char ssid[WIFI_SCAN_SSID_CAPACITY];
+    size_t length;
+    (void)env;
+    if (result == NULL) {
+        return 0;
+    }
+    /* The driver's SSID is a counted byte string, not a C string. */
+    length = result->ssid_len < sizeof(result->ssid) ? result->ssid_len : sizeof(result->ssid);
+    memcpy(ssid, result->ssid, length);
+    ssid[length] = '\0';
+    wifi_scan_on_result(&services.scan, ssid, result->rssi);
+    return 0;
+}
+
+static int scan_begin(void *context) {
+    static cyw43_wifi_scan_options_t options;
+    (void)context;
+    if (!wifi_manager_radio_powered(&services.wifi) && radio_on(NULL) != 0) {
+        return -1;
+    }
+    scan_radio = true;
+    /* Also fails while the driver is still finishing an abandoned scan. */
+    if (cyw43_wifi_scan_active(&cyw43_state) ||
+        cyw43_wifi_scan(&cyw43_state, &options, NULL, scan_on_result) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static void scan_settle(void) {
+    if (!scan_radio || cyw43_wifi_scan_active(&cyw43_state)) {
+        return;
+    }
+    /* The driver reports completion only through its scan-active flag. */
+    wifi_scan_on_done(&services.scan);
+    scan_radio = false;
+    if (!wifi_manager_radio_powered(&services.wifi)) {
+        radio_off(NULL);
     }
 }
 
@@ -279,7 +332,7 @@ static int net_tcp_write(void *context, const char *data, size_t length) {
 }
 
 static void platform_poll(void) {
-    if (wifi_manager_radio_powered(&services.wifi)) {
+    if (wifi_manager_radio_powered(&services.wifi) || scan_radio) {
         cyw43_arch_poll();
     }
 }
@@ -312,6 +365,14 @@ static void radio_leave(void *context) {
 static wifi_link_t radio_link_status(void *context) {
     (void)context;
     return WIFI_LINK_DOWN;
+}
+
+static int scan_begin(void *context) {
+    (void)context;
+    return -1;
+}
+
+static void scan_settle(void) {
 }
 
 static int net_dns_resolve(void *context, const char *host) {
@@ -350,6 +411,10 @@ static const wifi_manager_ops_t wifi_ops = {
     platform_clock_ms, radio_on, radio_off, radio_join, radio_leave, radio_link_status,
 };
 
+static const wifi_scan_ops_t scan_ops = {
+    platform_clock_ms, scan_begin,
+};
+
 static const http_stream_ops_t stream_ops = {
     platform_clock_ms, platform_link_up, net_dns_resolve, net_tcp_connect,
     net_tcp_write, net_tcp_close, net_tcp_abort,
@@ -381,6 +446,7 @@ void app_services_init(void) {
     memset(&services, 0, sizeof(services));
     ai_config_init(&services.config);
     wifi_manager_init(&services.wifi, &wifi_ops, NULL);
+    wifi_scan_init(&services.scan, &scan_ops, NULL);
     http_stream_init(&services.stream, &stream_ops, NULL);
     ollama_provider_init(&services.provider, on_provider_event, NULL);
     services.initialised = true;
@@ -393,6 +459,7 @@ void app_services_poll(void) {
     services.polling = true;
     platform_poll();
     wifi_manager_poll(&services.wifi);
+    app_services_wifi_scan_poll();
     http_stream_poll(&services.stream);
     services.polling = false;
 }
@@ -417,6 +484,43 @@ wifi_state_t app_services_wifi_state(void) {
 
 wifi_error_t app_services_wifi_error(void) {
     return wifi_manager_error(&services.wifi);
+}
+
+int app_services_wifi_scan_start(void) {
+    if (!services.initialised) {
+        return -1;
+    }
+    return wifi_scan_start(&services.scan);
+}
+
+void app_services_wifi_scan_poll(void) {
+    if (!services.initialised) {
+        return;
+    }
+    scan_settle();
+    wifi_scan_poll(&services.scan);
+}
+
+wifi_scan_state_t app_services_wifi_scan_state(void) {
+    return services.initialised ? wifi_scan_state(&services.scan) : WIFI_SCAN_IDLE;
+}
+
+size_t app_services_wifi_scan_count(void) {
+    return services.initialised ? wifi_scan_count(&services.scan) : 0u;
+}
+
+int app_services_wifi_scan_at(size_t i, char *ssid_buf, int *rssi) {
+    const char *ssid = services.initialised ? wifi_scan_ssid(&services.scan, i) : NULL;
+    if (ssid == NULL) {
+        return -1;
+    }
+    if (ssid_buf != NULL) {
+        memcpy(ssid_buf, ssid, strlen(ssid) + 1u);
+    }
+    if (rssi != NULL) {
+        *rssi = wifi_scan_rssi(&services.scan, i);
+    }
+    return 0;
 }
 
 int app_services_chat_start(const ollama_message_t *messages,

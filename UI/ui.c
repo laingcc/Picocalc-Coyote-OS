@@ -97,7 +97,8 @@ bool ui_show_input_dialog(const char* title, char* out, int max_len, unsigned fl
         }
         if (!done) sleep_ms(20);
     }
-    if (masked) memset(input, 0, sizeof(input));
+    /* Wiped whether or not it was masked: it may have been a password. */
+    memset(input, 0, sizeof(input));
     return ok;
 }
 
