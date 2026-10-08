@@ -477,6 +477,9 @@ static int process_record(json_stream_t *stream) {
 }
 
 void json_stream_init(json_stream_t *stream, json_stream_callback_t callback, void *context) {
+    if (stream == NULL) {
+        return;
+    }
     memset(stream, 0, sizeof(*stream));
     stream->callback = callback;
     stream->callback_context = context;
@@ -493,7 +496,14 @@ int json_stream_feed(json_stream_t *stream, const char *data, size_t length) {
         return -1;
     }
     if (stream->phase == JSON_STREAM_PHASE_DONE) {
-        return 0; /* terminal success: discard any later bytes */
+        if (length == 0u) {
+            return 0;
+        }
+        stream->failed = true;
+        stream->phase = JSON_STREAM_PHASE_ERROR;
+        emit(stream, JSON_STREAM_EVENT_ERROR, JSON_STREAM_ERROR_MALFORMED,
+             sizeof(JSON_STREAM_ERROR_MALFORMED) - 1u);
+        return -1;
     }
     for (size_t i = 0; i < length; i++) {
         char c = data[i];
@@ -516,8 +526,15 @@ int json_stream_feed(json_stream_t *stream, const char *data, size_t length) {
                      sizeof(JSON_STREAM_ERROR_MALFORMED) - 1u);
                 return -1;
             }
+            if (stream->phase == JSON_STREAM_PHASE_DONE && i + 1u < length) {
+                stream->failed = true;
+                stream->phase = JSON_STREAM_PHASE_ERROR;
+                emit(stream, JSON_STREAM_EVENT_ERROR, JSON_STREAM_ERROR_MALFORMED,
+                     sizeof(JSON_STREAM_ERROR_MALFORMED) - 1u);
+                return -1;
+            }
             if (stream->phase != JSON_STREAM_PHASE_OPEN) {
-                return 0; /* terminal reached; ignore the rest of this chunk */
+                return 0;
             }
         } else if (stream->record_length < JSON_STREAM_RECORD_MAX) {
             stream->record[stream->record_length++] = c;

@@ -206,8 +206,7 @@ static void check_terminal_semantics(void) {
     CHECK(ollama_provider_finish(&provider) == -1);
     CHECK(ollama_provider_is_done(&provider) == false);
 
-    /* DONE + CONTENT in one feed: the later record is ignored and the stream
-     * completes. */
+    /* DONE + CONTENT in one feed is a terminal protocol failure. */
     char combined[512];
     size_t done_len = strlen(done);
     size_t content_len = strlen(content);
@@ -216,13 +215,15 @@ static void check_terminal_semantics(void) {
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
     CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
-    CHECK(ollama_provider_feed(&provider, combined, done_len + content_len) == 0);
-    CHECK(log.count == 1);
+    CHECK(ollama_provider_feed(&provider, combined, done_len + content_len) == -1);
+    CHECK(log.count == 2);
     CHECK(log.type[0] == PROVIDER_EVENT_DONE);
+    CHECK(log.type[1] == PROVIDER_EVENT_ERROR);
     CHECK(ollama_provider_is_done(&provider));
+    CHECK(ollama_provider_failed(&provider));
     CHECK(ollama_provider_feed(&provider, content, content_len) == -1); /* latched */
-    CHECK(log.count == 1);
-    CHECK(ollama_provider_finish(&provider) == 0);
+    CHECK(log.count == 2);
+    CHECK(ollama_provider_finish(&provider) == -1);
 
     /* ERROR + CONTENT in one feed: the later record is ignored and finish
      * fails. */
@@ -239,16 +240,18 @@ static void check_terminal_semantics(void) {
     CHECK(ollama_provider_failed(&provider));
     CHECK(ollama_provider_finish(&provider) == -1);
 
-    /* Duplicate terminal records yield exactly one DONE event. */
+    /* Duplicate terminal records emit DONE, then fail the stream. */
     memcpy(combined, done, done_len);
     memcpy(combined + done_len, done, done_len);
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
     CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
-    CHECK(ollama_provider_feed(&provider, combined, done_len * 2u) == 0);
-    CHECK(log.count == 1);
+    CHECK(ollama_provider_feed(&provider, combined, done_len * 2u) == -1);
+    CHECK(log.count == 2);
     CHECK(log.type[0] == PROVIDER_EVENT_DONE);
-    CHECK(ollama_provider_finish(&provider) == 0);
+    CHECK(log.type[1] == PROVIDER_EVENT_ERROR);
+    CHECK(ollama_provider_failed(&provider));
+    CHECK(ollama_provider_finish(&provider) == -1);
 }
 
 static void check_null_preconditions(void) {

@@ -183,6 +183,7 @@ static void check_malformed(void) {
         "HTTP/2.0 200 OK\r\n\r\n",
         "HTTP/1.1 20 OK\r\n\r\n",
         "HTTP/1.1 2000 OK\r\n\r\n",
+        "HTTP/1.1 200\r\nContent-Length: 0\r\n\r\n",
         "HTTP/1.1 999 OK\r\n\r\n",
         "HTTP/1.1 099 OK\r\n\r\n",
         /* LF-only status line and LF-only header line. */
@@ -254,6 +255,7 @@ static void check_null_preconditions(void) {
     response_t response;
     http_parser_t parser;
     memset(&response, 0, sizeof(response));
+    http_parser_init(NULL, on_head, on_body, &response);
     http_parser_init(&parser, on_head, on_body, &response);
 
     CHECK(http_parser_feed(NULL, "x", 1u) == -1);
