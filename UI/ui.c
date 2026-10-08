@@ -9,6 +9,7 @@
 #include "pwm_sound/pwm_sound.h"
 #include "keyboard_definition.h"
 #include "text_mode.h"
+#include "chat_mode.h"
 #include "dirent.h"
 
 #define MENU_W 22
@@ -59,42 +60,49 @@ static void draw_menu_opt(int x, int y, int w, int row, const char* text, bool s
         lcd_print_char_at(fg, bg, text[i], 0, ox + i*8, y + row*12);
 }
 
-static void draw_input_field(int x, int y, int w, int row, const char* text, int maxd) {
+static void draw_input_field(int x, int y, int w, int row, const char* text, int maxd, bool masked) {
     int fy = y + row*12, fx = x + 8;
     draw_rect_spi(fx, fy, fx + (w-2)*8, fy + 12, BLACK);
     int len = strlen(text);
     int dlen = len > maxd ? maxd : len;
     int dstart = len > maxd ? len - maxd : 0;
     for (int i = 0; i < dlen; i++)
-        lcd_print_char_at(BLACK, WHITE, text[dstart + i], 0, fx + i*8, fy);
+        lcd_print_char_at(BLACK, WHITE, masked ? '*' : text[dstart + i], 0, fx + i*8, fy);
     lcd_print_char_at(BLACK, WHITE, '_', 0, fx + dlen*8, fy);
 }
 
-static bool run_input_dialog(const char* title, char* out, int max_len) {
+bool ui_show_input_dialog(const char* title, char* out, int max_len, unsigned flags) {
     int x = MENU_X, y = (LCD_HEIGHT - 5*12)/2, maxd = MENU_W - 3;
-    char input[64] = {0};
+    char input[UI_INPUT_MAX + 1] = {0};
     int len = 0;
+    bool masked = (flags & UI_INPUT_MASKED) != 0, done = false, ok = false;
     draw_menu_frame(x, y, MENU_W, 5, title);
-    draw_input_field(x, y, MENU_W, 2, input, maxd);
-    while (1) {
+    draw_input_field(x, y, MENU_W, 2, input, maxd, masked);
+    while (!done) {
         ui_idle();
         int c = lcd_getc(0);
-        if (c == KEY_ENTER && len > 0) {
+        if (c == KEY_ENTER && (len > 0 || (flags & UI_INPUT_ALLOW_EMPTY))) {
             strncpy(out, input, max_len-1); out[max_len-1] = '\0';
-            return true;
+            done = ok = true;
         } else if (c == KEY_ESC || (c == KEY_BACKSPACE && len == 0)) {
-            return false;
+            done = true;
         } else if (c == KEY_BACKSPACE && len > 0) {
             input[--len] = '\0';
-            draw_input_field(x, y, MENU_W, 2, input, maxd);
-        } else if (c >= 32 && c < 127 && len < max_len-1 && len < 63) {
-            if (c != '/' && c != '\\' && c != ':' && c != '*' && c != '?' && c != '"' && c != '<' && c != '>' && c != '|') {
+            draw_input_field(x, y, MENU_W, 2, input, maxd, masked);
+        } else if (c >= 32 && c < 127 && len < max_len-1 && len < UI_INPUT_MAX) {
+            if ((flags & UI_INPUT_ANY_CHAR) || (c != '/' && c != '\\' && c != ':' && c != '*' && c != '?' && c != '"' && c != '<' && c != '>' && c != '|')) {
                 input[len++] = c; input[len] = '\0';
-                draw_input_field(x, y, MENU_W, 2, input, maxd);
+                draw_input_field(x, y, MENU_W, 2, input, maxd, masked);
             }
         }
-        sleep_ms(20);
+        if (!done) sleep_ms(20);
     }
+    if (masked) memset(input, 0, sizeof(input));
+    return ok;
+}
+
+static bool run_input_dialog(const char* title, char* out, int max_len) {
+    return ui_show_input_dialog(title, out, max_len, 0);
 }
 
 static int run_menu(int x, int y, int w, int h, const char* title, MenuItem* items, int cnt, int sel) {
@@ -113,6 +121,16 @@ static int run_menu(int x, int y, int w, int h, const char* title, MenuItem* ite
     }
 }
 
+int ui_show_list_menu(const char* title, const char* const* labels, int cnt, int sel) {
+    MenuItem items[MAX_MENU_ITEMS];
+    if (cnt > MAX_MENU_ITEMS) cnt = MAX_MENU_ITEMS;
+    if (cnt <= 0) return -1;
+    for (int i = 0; i < cnt; i++) snprintf(items[i].label, sizeof(items[i].label), "%s", labels[i]);
+    if (sel < 0 || sel >= cnt) sel = 0;
+    int h = cnt + 3;
+    return run_menu((LCD_WIDTH - UI_LIST_MENU_W*8)/2, (LCD_HEIGHT - h*12)/2, UI_LIST_MENU_W, h, title, items, cnt, sel);
+}
+
 static void draw() {
     lcd_clear();
     draw_rect_spi(0, 295, 320, 320, WHITE);
@@ -129,6 +147,7 @@ app_mode_t ui_get_current_mode() { return current_mode; }
 void ui_set_current_mode(app_mode_t mode) {
     current_mode = mode;
     if (mode == MODE_CALCULATOR) { draw(); ui_redraw_tab_content(); }
+    else if (mode == MODE_CHAT) chat_mode_redraw();
     else text_mode_redraw();
 }
 
@@ -254,11 +273,15 @@ void ui_redraw_tab_content() {
 }
 
 void ui_show_mode_menu() {
-    MenuItem items[] = {{" Text "}, {" Calculator "}};
-    int sel = run_menu(MENU_X, MENU_Y, MENU_W, MENU_H, " MODE ", items, 2, current_mode == MODE_TEXT ? 0 : 1);
+    MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}};
+    int sel = run_menu(MENU_X, MENU_Y, MENU_W, MENU_H, " MODE ", items, 3,
+                       current_mode == MODE_TEXT ? 0 : current_mode == MODE_CHAT ? 2 : 1);
     if (sel == 0) ui_set_current_mode(MODE_TEXT);
     else if (sel == 1) ui_set_current_mode(MODE_CALCULATOR);
-    else { if (current_mode == MODE_CALCULATOR) ui_redraw_tab_content(); else text_mode_redraw(); }
+    else if (sel == 2) ui_set_current_mode(MODE_CHAT);
+    else if (current_mode == MODE_CALCULATOR) ui_redraw_tab_content();
+    else if (current_mode == MODE_CHAT) chat_mode_redraw();
+    else text_mode_redraw();
 }
 
 void ui_show_menu() {

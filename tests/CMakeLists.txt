@@ -25,6 +25,9 @@ add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/ai/http_parser.c"
     "${COYOTE_ROOT}/ai/ollama_provider.c"
     "${COYOTE_ROOT}/ai/chat_model.c"
+    "${COYOTE_ROOT}/ai/chat_request.c"
+    "${COYOTE_ROOT}/ai/chat_settings.c"
+    "${COYOTE_ROOT}/ai/chat_layout.c"
     "${COYOTE_ROOT}/ai/http_stream.c"
     "${COYOTE_ROOT}/ai/wifi_manager.c"
 )
@@ -39,6 +42,9 @@ add_executable(coyote_ai_tests
     test_http_parser.c
     test_ollama_provider.c
     test_chat_model.c
+    test_chat_request.c
+    test_chat_settings.c
+    test_chat_layout.c
     test_ai_config.c
     test_http_stream.c
 )
