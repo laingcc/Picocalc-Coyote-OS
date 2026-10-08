@@ -80,9 +80,9 @@ provider_request_t ollama_provider_request(ollama_provider_t *provider);
 
 /* Feed response bytes.  A syntactically valid record carrying an error still
  * returns 0 with an ERROR event; the provider then latches failed and rejects
- * further feeds.  A DONE event latches the stream as complete, and every feed
- * after either terminal returns -1.  Returns -1 if not built, already failed,
- * already done, or fed a NULL buffer with a non-zero length. */
+ * further feeds.  After DONE, a zero-length feed remains harmless; any non-empty
+ * input emits ERROR, latches failure, and returns -1.  Returns -1 if not built,
+ * already failed, or fed a NULL buffer with a non-zero length. */
 int ollama_provider_feed(ollama_provider_t *provider, const char *data, size_t length);
 int ollama_provider_finish(ollama_provider_t *provider);
 
