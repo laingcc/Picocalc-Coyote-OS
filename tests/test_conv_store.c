@@ -590,6 +590,57 @@ static void check_marker_round_trip(void) {
     CHECK_STR_EQ(m->text, msg);
 }
 
+static void check_title_control_chars_rejected(void) {
+    chat_model_t m;
+
+    clean();
+    chat_model_init(&m, NULL, NULL, 0u);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "msg", 3u) == 0);
+
+    /* A title containing a control character must be rejected, not written
+     * verbatim into the file where it would break the line structure. */
+    CHECK(conv_store_save(&m, "bad\ntitle", test_dir) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_save(&m, "bad\rtitle", test_dir) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(!exists(CONV_STORE_FILE_NAME));
+    CHECK(!exists(CONV_STORE_TEMP_NAME));
+}
+
+static void check_message_count_too_large(void) {
+    chat_model_t loaded;
+    char buf[2048];
+    size_t off = 0u;
+
+    clean();
+    chat_model_init(&loaded, NULL, NULL, 0u);
+
+    off += (size_t)snprintf(buf + off, sizeof(buf) - off, "[conversation]\ntitle=Nine\n");
+    for (int i = 0; i < 9; i++) {
+        off += (size_t)snprintf(buf + off, sizeof(buf) - off,
+                                "[message]\nrole=user\ntext=msg%d\n", i);
+    }
+    write_raw_file(CONV_STORE_FILE_NAME, buf, off);
+
+    /* A conversation over CHAT_MAX_MESSAGES is TOO_LARGE, not CORRUPT. */
+    CHECK(conv_store_load(&loaded, "Nine", test_dir) == CONV_STORE_TOO_LARGE);
+    CHECK(chat_model_message_count(&loaded) == 0u);
+}
+
+static void check_stale_backup_removed(void) {
+    chat_model_t m;
+
+    clean();
+    chat_model_init(&m, NULL, NULL, 0u);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "fresh", 5u) == 0);
+
+    /* A stale backup from an interrupted swap must not survive a save. */
+    static const char bak[] = "[conversation]\ntitle=Old\n[message]\nrole=user\ntext=old\n";
+    write_raw_file(CONV_STORE_BACKUP_NAME, bak, sizeof(bak) - 1u);
+
+    CHECK(conv_store_save(&m, "Fresh", test_dir) == CONV_STORE_OK);
+    CHECK(exists(CONV_STORE_FILE_NAME));
+    CHECK(!exists(CONV_STORE_BACKUP_NAME));
+}
+
 void test_conv_store(void) {
     check_arguments();
     check_empty_transcript_save_rejected();
@@ -606,5 +657,8 @@ void test_conv_store(void) {
     check_backup_fallback();
     check_title_truncation();
     check_marker_round_trip();
+    check_title_control_chars_rejected();
+    check_message_count_too_large();
+    check_stale_backup_removed();
     clean();
 }
