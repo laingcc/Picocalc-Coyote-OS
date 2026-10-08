@@ -11,7 +11,7 @@ from aiohttp import web
 from .broker import BridgeBusy, BridgeUnavailable, UpstreamError
 
 MAX_BODY_BYTES = 16 * 1024
-MIN_TOKEN_CHARS = 32
+MIN_TOKEN_BYTES = 32
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 BROKER_KEY = web.AppKey("broker")
 TOKEN_KEY = web.AppKey("bridge_token", str)
@@ -22,12 +22,28 @@ def _json_error(status: int, message: str) -> web.Response:
 
 
 def _authorized(request: web.Request) -> bool:
-    expected = request.app[TOKEN_KEY]
+    expected = request.app[TOKEN_KEY].encode("utf-8")
     header = request.headers.get("Authorization", "")
     prefix = "Bearer "
     supplied = header[len(prefix):] if header.startswith(prefix) else ""
     valid_shape = header.startswith(prefix)
-    return valid_shape and hmac.compare_digest(supplied, expected)
+    try:
+        supplied_bytes = supplied.encode("utf-8")
+    except UnicodeEncodeError:
+        supplied_bytes = b""
+    return valid_shape and hmac.compare_digest(supplied_bytes, expected)
+
+
+def validate_bridge_token(token: str) -> None:
+    if not isinstance(token, str):
+        raise ValueError("bridge bearer token must be text")
+    try:
+        encoded = token.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("bridge bearer token is not valid UTF-8") from exc
+    if len(encoded) < MIN_TOKEN_BYTES:
+        raise ValueError(
+            f"bridge bearer token must be at least {MIN_TOKEN_BYTES} UTF-8 bytes")
 
 
 async def _read_json(request: web.Request) -> Any:
@@ -106,7 +122,7 @@ async def chat(request: web.Request) -> web.StreamResponse:
             line = json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode() + b"\n"
             await response.write(line)
         await response.write_eof()
-    except (ConnectionError, asyncio.CancelledError):
+    except BaseException:
         turn.disconnect()
         raise
     finally:
@@ -129,8 +145,7 @@ async def health(request: web.Request) -> web.Response:
 
 
 def create_app(broker, bridge_token: str) -> web.Application:
-    if not isinstance(bridge_token, str) or len(bridge_token) < MIN_TOKEN_CHARS:
-        raise ValueError(f"bridge bearer token must be at least {MIN_TOKEN_CHARS} characters")
+    validate_bridge_token(bridge_token)
     app = web.Application(client_max_size=MAX_BODY_BYTES)
     app[BROKER_KEY] = broker
     app[TOKEN_KEY] = bridge_token
