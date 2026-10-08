@@ -54,6 +54,10 @@ static void begin(wifi_manager_t *wifi) {
     leave_network(wifi);
 
     if (wifi->ssid[0] == '\0') {
+        if (wifi->radio_powered) {
+            wifi->radio_powered = false;
+            wifi->ops->radio_off(wifi->ops_context);
+        }
         wifi->state = WIFI_STATE_NEEDS_CONFIG;
         return;
     }

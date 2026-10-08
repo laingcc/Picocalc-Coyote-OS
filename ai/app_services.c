@@ -401,10 +401,11 @@ int app_services_configure(const ai_config_t *config) {
     if (!services.initialised || config == NULL) {
         return -1;
     }
-    http_stream_cancel(&services.stream);
+    /* Validate first: a rejected config must not disturb an in-flight chat. */
     if (wifi_manager_set_credentials(&services.wifi, config->ssid, config->password) != 0) {
         return -1;
     }
+    http_stream_cancel(&services.stream);
     services.config = *config;
     wifi_manager_enable(&services.wifi);
     return 0;
