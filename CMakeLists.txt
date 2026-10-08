@@ -21,6 +21,7 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/rp2040-psram rp2040-psram)
 add_executable(coyote
 	main.c
         UI/ui.c
+        UI/chat_mode.c
         text_mode.c
         keyboard_definition.h
         tinyexpr/tinyexpr.c
@@ -30,6 +31,9 @@ add_executable(coyote
         ai/http_parser.c
         ai/ollama_provider.c
         ai/chat_model.c
+        ai/chat_request.c
+        ai/chat_settings.c
+        ai/chat_layout.c
         ai/wifi_manager.c
         ai/http_stream.c
         ai/app_services.c

@@ -11,6 +11,7 @@
 #include "pwm_sound/pwm_sound.h"
 #include "config.h"
 #include "text_mode.h"
+#include "UI/chat_mode.h"
 #include "blockdevice/sd.h"
 #include "filesystem/fat.h"
 #include "filesystem/vfs.h"
@@ -23,6 +24,7 @@ void handle_keyboard() {
     int c = lcd_getc(0);
     if (c == KEY_HOME) { ui_show_mode_menu(); return; }
     if (ui_get_current_mode() == MODE_TEXT) { text_mode_handle_input(c); return; }
+    if (ui_get_current_mode() == MODE_CHAT) { chat_mode_handle_input(c); return; }
 
     int idx = ui_get_active_tab_idx();
     TabContext* ctx = ui_get_tab_context(idx);
@@ -83,6 +85,7 @@ int main() {
 
     app_services_init();
     ui_set_idle_hook(app_services_poll);
+    chat_mode_init();
 
     while (1) { handle_keyboard(); app_services_poll(); sleep_ms(20); }
 }
