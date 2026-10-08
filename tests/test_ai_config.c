@@ -120,6 +120,10 @@ static void check_parse_errors(void) {
     CHECK_STR_EQ(ai_config_parser_error_key(&parser), "host");
     CHECK(parse_text(&config, &parser, "provider=\n", 99u) == AI_CONFIG_INVALID_VALUE);
     CHECK(parse_text(&config, &parser, "provider=cloud\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "host=good\rbad\n", 99u) ==
+          AI_CONFIG_MALFORMED_LINE);
+    CHECK(parse_text(&config, &parser, "host=good\r", 1u) ==
+          AI_CONFIG_MALFORMED_LINE);
     CHECK(parse_text(&config, &parser, "version=2\n", 99u) == AI_CONFIG_UNSUPPORTED_VERSION);
     CHECK(ai_config_parser_init(&parser, &config) == AI_CONFIG_OK);
     CHECK(ai_config_parser_feed(&parser, embedded_nul, sizeof(embedded_nul)) ==
@@ -156,7 +160,7 @@ static void check_numeric_validation(void) {
 }
 
 static void check_bounded_input(void) {
-    static char input[AI_CONFIG_LINE_MAX + 2u];
+    static char input[AI_CONFIG_LINE_MAX + 3u];
     static char value[AI_CONFIG_SSID_CAPACITY + 8u];
     ai_config_t config;
     ai_config_parser_t parser;
@@ -166,6 +170,14 @@ static void check_bounded_input(void) {
     memset(input + 2u, 'x', AI_CONFIG_LINE_MAX - 2u);
     input[AI_CONFIG_LINE_MAX] = '\0';
     CHECK(parse_text(&config, &parser, input, 17u) == AI_CONFIG_OK);
+
+    /* CRLF does not reduce the documented content limit by one byte. */
+    input[AI_CONFIG_LINE_MAX] = '\r';
+    input[AI_CONFIG_LINE_MAX + 1u] = '\n';
+    input[AI_CONFIG_LINE_MAX + 2u] = '\0';
+    CHECK(parse_text(&config, &parser, input, 17u) == AI_CONFIG_OK);
+
+    memset(input + 2u, 'x', AI_CONFIG_LINE_MAX - 1u);
     input[AI_CONFIG_LINE_MAX] = 'x';
     input[AI_CONFIG_LINE_MAX + 1u] = '\0';
     CHECK(parse_text(&config, &parser, input, 17u) == AI_CONFIG_LINE_TOO_LONG);

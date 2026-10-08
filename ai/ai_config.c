@@ -240,7 +240,19 @@ ai_config_status_t ai_config_parser_feed(ai_config_parser_t *parser, const void 
         if (bytes[i] == '\0') {
             return fail(parser, AI_CONFIG_EMBEDDED_NUL, KEY_UNKNOWN);
         }
-        if (bytes[i] == '\n') {
+        if (parser->pending_cr != 0u) {
+            if (bytes[i] != '\n') {
+                return fail(parser, AI_CONFIG_MALFORMED_LINE, KEY_UNKNOWN);
+            }
+            parser->pending_cr = 0u;
+            status = parse_line(parser);
+            parser->line_length = 0u;
+            if (status != AI_CONFIG_OK) {
+                return status;
+            }
+        } else if (bytes[i] == '\r') {
+            parser->pending_cr = 1u;
+        } else if (bytes[i] == '\n') {
             status = parse_line(parser);
             parser->line_length = 0u;
             if (status != AI_CONFIG_OK) {
@@ -264,6 +276,9 @@ ai_config_status_t ai_config_parser_finish(ai_config_parser_t *parser) {
     parser->finished = 1u;
     if (parser->status != AI_CONFIG_OK) {
         return parser->status;
+    }
+    if (parser->pending_cr != 0u) {
+        return fail(parser, AI_CONFIG_MALFORMED_LINE, KEY_UNKNOWN);
     }
     if (parser->line_length == 0u) {
         return AI_CONFIG_OK;
