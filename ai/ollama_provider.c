@@ -212,7 +212,7 @@ int ollama_provider_feed(ollama_provider_t *provider, const char *data, size_t l
     if (data == NULL && length > 0u) {
         return -1;
     }
-    if (!provider->built || provider->failed || provider->done) {
+    if (!provider->built || provider->failed) {
         return -1;
     }
     return json_stream_feed(&provider->stream, data, length);

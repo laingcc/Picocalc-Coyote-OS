@@ -225,6 +225,21 @@ static void check_terminal_semantics(void) {
     CHECK(log.count == 2);
     CHECK(ollama_provider_finish(&provider) == -1);
 
+    /* A clean DONE followed by later non-empty input must also fail. */
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_feed(&provider, done, done_len) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == PROVIDER_EVENT_DONE);
+    CHECK(ollama_provider_feed(&provider, NULL, 0u) == 0);
+    CHECK(ollama_provider_feed(&provider, content, content_len) == -1);
+    CHECK(log.count == 2);
+    CHECK(log.type[1] == PROVIDER_EVENT_ERROR);
+    CHECK(ollama_provider_is_done(&provider));
+    CHECK(ollama_provider_failed(&provider));
+    CHECK(ollama_provider_finish(&provider) == -1);
+
     /* ERROR + CONTENT in one feed: the later record is ignored and finish
      * fails. */
     const char *error = "{\"error\":\"boom\"}\n";
