@@ -62,6 +62,7 @@ typedef struct {
     uint16_t seen_keys;
     ai_config_status_t status;
     char error_key[AI_CONFIG_KEY_CAPACITY];
+    unsigned char pending_cr;
     unsigned char finished;
 } ai_config_parser_t;
 
