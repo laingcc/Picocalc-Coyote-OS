@@ -1001,10 +1001,72 @@ static void check_start_validation_and_reuse(void) {
     }
 }
 
+/* A body whose read cancels the request: the stream must not write after. */
+typedef struct {
+    http_stream_t *stream;
+    int calls;
+} cancel_on_read_t;
+
+static size_t cancel_on_read(void *context, size_t offset, char *destination, size_t capacity) {
+    cancel_on_read_t *c = (cancel_on_read_t *)context;
+    (void)offset;
+    c->calls++;
+    if (capacity > 0) {
+        destination[0] = 'x'; /* a valid byte the stream would otherwise write */
+    }
+    http_stream_cancel(c->stream);
+    return capacity > 0 ? 1u : 0u;
+}
+
+static size_t body_length_99(void *context) {
+    (void)context;
+    return 99u; /* strlen(REQUEST_BODY) */
+}
+
+static void check_cancel_from_body_read(void) {
+    harness_t *h = &g_harness;
+    cancel_on_read_t cancel;
+    http_stream_request_t request;
+    provider_request_t body;
+
+    harness_reset(h);
+    cancel.stream = &h->stream;
+    cancel.calls = 0;
+
+    body.length = body_length_99;
+    body.read = cancel_on_read;
+    body.context = &cancel;
+
+    memset(&request, 0, sizeof(request));
+    request.host = "wang.local";
+    request.port = 11434u;
+    request.method = ollama_provider_method();
+    request.path = ollama_provider_path();
+    request.content_type = ollama_provider_content_type();
+    request.body = body;
+    request.sink.feed = sink_feed;
+    request.sink.finish = sink_finish;
+    request.sink.context = &h->provider;
+    request.connect_timeout_ms = CONNECT_TIMEOUT_MS;
+    request.idle_timeout_ms = IDLE_TIMEOUT_MS;
+    request.request_timeout_ms = REQUEST_TIMEOUT_MS;
+
+    ollama_provider_init(&h->provider, on_event, h);
+    CHECK(http_stream_start(&h->stream, &request) == 0);
+    http_stream_on_dns(&h->stream, true);
+    http_stream_on_connected(&h->stream, true);
+
+    /* The read cancelled the request mid-send: the body byte must not have
+     * been written, and the error is CANCELLED, not SEND. */
+    CHECK(cancel.calls >= 1);
+    CHECK(h->net.write_calls == 1); /* request head only, no body byte */
+    CHECK(http_stream_error(&h->stream) == HTTP_STREAM_ERROR_CANCELLED);
+    CHECK(h->net.live == 0);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Wi-Fi manager                                                             */
 /* ------------------------------------------------------------------------ */
-
 typedef struct {
     uint32_t now;
     wifi_link_t link;
@@ -1103,6 +1165,28 @@ static void check_wifi_needs_config(void) {
     CHECK(wifi_manager_set_credentials(&wifi, "", "") == 0);
     CHECK(wifi_manager_state(&wifi) == WIFI_STATE_NEEDS_CONFIG);
     CHECK(radio.leave_calls == 1);
+}
+
+static void check_wifi_clear_credentials_powers_off(void) {
+    fake_radio_t radio;
+    wifi_manager_t wifi;
+
+    radio_reset(&radio, &wifi);
+    CHECK(wifi_manager_set_credentials(&wifi, "net", "pw") == 0);
+    wifi_manager_enable(&wifi);
+    CHECK(wifi_manager_state(&wifi) == WIFI_STATE_CONNECTING);
+    CHECK(radio.radio_on_calls == 1);
+    radio.link = WIFI_LINK_UP;
+    wifi_manager_poll(&wifi);
+    CHECK(wifi_manager_state(&wifi) == WIFI_STATE_ONLINE);
+    CHECK(wifi_manager_radio_powered(&wifi));
+
+    /* Clearing the SSID while enabled drops to NEEDS_CONFIG and powers the
+     * radio off, so an unconfigured unit does not idle in station mode. */
+    CHECK(wifi_manager_set_credentials(&wifi, "", "") == 0);
+    CHECK(wifi_manager_state(&wifi) == WIFI_STATE_NEEDS_CONFIG);
+    CHECK(!wifi_manager_radio_powered(&wifi));
+    CHECK(radio.radio_off_calls == 1);
 }
 
 static void check_wifi_connect_and_disable(void) {
@@ -1329,12 +1413,14 @@ void test_http_stream(void) {
     check_remote_close_mid_body();
     check_cancellation();
     check_cancel_from_event_callback();
+    check_cancel_from_body_read();
     check_protocol_errors();
     check_http_error_status();
     check_early_response_while_sending();
     check_start_validation_and_reuse();
 
     check_wifi_needs_config();
+    check_wifi_clear_credentials_powers_off();
     check_wifi_connect_and_disable();
     check_wifi_backoff_is_bounded();
     check_wifi_join_timeout_and_errors();

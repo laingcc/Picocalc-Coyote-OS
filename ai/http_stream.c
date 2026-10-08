@@ -97,6 +97,9 @@ static void pump_send(http_stream_t *stream) {
             }
             length = stream->body.read(stream->body.context, stream->queued - stream->head_length,
                                        stream->window, want);
+            if (stream->state != HTTP_STREAM_SENDING) {
+                return; /* cancelled or failed during the read call-out */
+            }
             if (length == 0u || length > want) {
                 /* The body no longer matches the advertised Content-Length. */
                 fail(stream, HTTP_STREAM_ERROR_SEND);
