@@ -21,11 +21,11 @@
  * Terminal semantics
  * ------------------
  * A stream succeeds only when exactly one terminal "done": true event has been
- * delivered.  Once a DONE event (success) or an ERROR event (failure) has been
- * emitted the stream is latched: any further input is discarded and no further
- * events are produced, so a duplicate or post-terminal record can never be
- * observed.  finish() reports success only for the DONE terminal; end of input
- * before DONE (including after an ERROR) fails with -1.
+ * delivered and no bytes follow it.  Non-empty input after DONE emits ERROR and
+ * latches failure; a duplicate or post-terminal record is never accepted.
+ * Once ERROR is emitted the stream remains failed and produces no later events.
+ * finish() reports success only for an uncontaminated DONE terminal; end of
+ * input before DONE (including after an ERROR) fails with -1.
  *
  * The event payload pointer is owned by the stream and is only valid for the
  * duration of the callback.  On a malformed or oversized record the stream is
@@ -79,10 +79,10 @@ typedef struct {
 void json_stream_init(json_stream_t *stream, json_stream_callback_t callback, void *context);
 
 /* Feed a chunk of NDJSON bytes.  Returns 0 on success (including partial input,
- * and including a valid record that carried an "error"), or -1 once the stream
- * has failed or already terminated with an ERROR.  data may be NULL only when
- * length is 0.  Bytes after a terminal event are discarded without producing
- * further events. */
+ * a zero-length feed after DONE, and a valid record that carried an "error"),
+ * or -1 once the stream has failed or already terminated with an ERROR.  data
+ * may be NULL only when length is 0.  Non-empty input after DONE emits ERROR and
+ * latches failure. */
 int json_stream_feed(json_stream_t *stream, const char *data, size_t length);
 
 /* Signal end of the transport.  A trailing record without a newline is parsed,
