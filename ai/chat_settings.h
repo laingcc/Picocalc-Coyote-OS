@@ -35,7 +35,8 @@ typedef enum {
 /* Short display name, e.g. "Host"; "" for an unknown field. */
 const char *chat_settings_label(chat_setting_t field);
 
-/* True for fields whose value must not be echoed while it is typed. */
+/* True for fields whose stored value is never displayed (it is shown only
+ * while being typed). */
 int chat_settings_is_secret(chat_setting_t field);
 
 /* True for fields that may be set to the empty string. */

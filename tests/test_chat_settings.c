@@ -190,6 +190,8 @@ static void check_arguments_and_truncation(void) {
     ai_config_t config;
     char out[8];
     ai_config_init(&config);
+    CHECK_STR_EQ(config.host, "");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
 
     CHECK(chat_settings_set(NULL, CHAT_SETTING_HOST, "h") == AI_CONFIG_INVALID_ARGUMENT);
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, NULL) == AI_CONFIG_INVALID_ARGUMENT);

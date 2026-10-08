@@ -15,6 +15,7 @@ void test_chat_layout(void);
 void test_ai_config(void);
 void test_config_store(void);
 void test_http_stream(void);
+void test_wifi_scan(void);
 
 int main(void) {
     test_json_stream();
@@ -27,6 +28,7 @@ int main(void) {
     test_ai_config();
     test_config_store();
     test_http_stream();
+    test_wifi_scan();
 
     printf("%d checks, %d failures\n", g_tests_run, g_tests_failed);
     return g_tests_failed == 0 ? 0 : 1;

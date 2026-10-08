@@ -34,6 +34,7 @@ static ai_config_t draft;   /* settings being edited; wiped when the menu closes
 static char note[NOTE_MAX + 1];
 static char status_drawn[COLS + 1];
 static char setting_labels[CHAT_SETTING_COUNT + 1][32];
+static char scan_labels[WIFI_SCAN_MAX_NETWORKS][32];
 static size_t scroll;       /* rows scrolled back from the newest line */
 static uint32_t transcript_drawn_ms;
 static bool transcript_dirty, composer_dirty;
@@ -235,6 +236,7 @@ static void send(void) {
     if (chat_model_composer_length(&chat) == 0) return;
     if (chat_model_is_streaming(&chat)) { set_note("busy: Esc cancels"); return; }
     if (!config.model[0]) { set_note("set a model (F5)"); return; }
+    if (!config.host[0]) { set_note("set host (F5)"); return; }
     if (app_services_wifi_state() != WIFI_STATE_ONLINE) { set_note("Wi-Fi not online"); return; }
     if (app_services_chat_active()) { set_note("busy"); return; }
     if (chat_model_submit(&chat) != 0) { set_note("message too long"); return; }
@@ -289,14 +291,14 @@ static void explain_rejection(chat_setting_t field, ai_config_status_t status) {
     notice(" NOT CHANGED ", text);
 }
 
-/* Prompt for one field and store it in target if it validates.  The typed
- * value is wiped afterwards because it may be the Wi-Fi password. */
+/* Prompt for one field and store it in target if it validates.  Every field,
+ * the Wi-Fi password included, is shown as it is typed; the typed value is
+ * wiped afterwards because it may be that password. */
 static bool edit_setting(ai_config_t *target, chat_setting_t field) {
     char value[UI_INPUT_MAX + 1], title[24];
     unsigned flags = UI_INPUT_ANY_CHAR;
     ai_config_status_t status;
 
-    if (chat_settings_is_secret(field)) flags |= UI_INPUT_MASKED;
     if (chat_settings_allows_empty(field)) flags |= UI_INPUT_ALLOW_EMPTY;
     snprintf(title, sizeof(title), " %s ", chat_settings_label(field));
     if (!ui_show_input_dialog(title, value, sizeof(value), flags)) return false;
@@ -310,6 +312,51 @@ static void setting_label(const ai_config_t *from, chat_setting_t field, char *l
     char value[20];
     chat_settings_format(from, field, value, sizeof(value));
     snprintf(label, capacity, " %s: %s ", chat_settings_label(field), value[0] ? value : "(none)");
+}
+
+/* Run a network scan to its end, keeping the transport serviced.  The scan is
+ * bounded by WIFI_SCAN_TIMEOUT_MS; keys pressed meanwhile are discarded so
+ * they cannot pick from the list that follows. */
+static bool scan_networks(void) {
+    if (app_services_wifi_scan_start() != 0) return false;
+    set_note("Scanning...");
+    chat_mode_redraw();
+    while (app_services_wifi_scan_state() == WIFI_SCAN_SCANNING) {
+        app_services_poll();
+        lcd_getc(0);
+        sleep_ms(20);
+    }
+    note[0] = '\0';
+    return app_services_wifi_scan_state() == WIFI_SCAN_DONE;
+}
+
+/* Scan, pick a network into target's SSID, then ask for its password. */
+static void scan_and_pick(ai_config_t *target) {
+    const char *labels[WIFI_SCAN_MAX_NETWORKS];
+    char ssid[WIFI_SCAN_SSID_CAPACITY];
+    ai_config_status_t status;
+    int count, rssi, sel;
+
+    if (!scan_networks()) { notice(" WI-FI SCAN ", " Scan failed "); return; }
+    count = (int)app_services_wifi_scan_count();
+    if (count == 0) { notice(" WI-FI SCAN ", " No networks found "); return; }
+    for (int i = 0; i < count; i++) {
+        app_services_wifi_scan_at((size_t)i, ssid, &rssi);
+        snprintf(scan_labels[i], sizeof(scan_labels[i]), " %-21.21s %4d dBm", ssid, rssi);
+        labels[i] = scan_labels[i];
+    }
+    sel = menu(" NETWORKS ", labels, count, 0);
+    if (sel < 0 || app_services_wifi_scan_at((size_t)sel, ssid, NULL) != 0) return;
+    status = chat_settings_set(target, CHAT_SETTING_SSID, ssid);
+    if (status != AI_CONFIG_OK) { explain_rejection(CHAT_SETTING_SSID, status); return; }
+    edit_setting(target, CHAT_SETTING_PASSWORD);
+}
+
+static void ssid_menu(ai_config_t *target) {
+    static const char *const choices[] = {" Scan networks ", " Type manually "};
+    int sel = menu(" SSID ", choices, 2, 0);
+    if (sel == 0) scan_and_pick(target);
+    else if (sel == 1) edit_setting(target, CHAT_SETTING_SSID);
 }
 
 static void settings_menu(void) {
@@ -327,7 +374,8 @@ static void settings_menu(void) {
         if (sel < 0) break;
         if (sel == CHAT_SETTING_COUNT) { config = draft; apply_config(); break; }
         if (sel == CHAT_SETTING_PROVIDER) continue; /* chosen from the chat menu; only ollama exists */
-        edit_setting(&draft, (chat_setting_t)sel);
+        if (sel == CHAT_SETTING_SSID) ssid_menu(&draft);
+        else edit_setting(&draft, (chat_setting_t)sel);
     }
     memset(&draft, 0, sizeof(draft));
 }
@@ -347,7 +395,7 @@ static void chat_menu(void) {
         setting_label(&config, CHAT_SETTING_MODEL, setting_labels[0], sizeof(setting_labels[0]));
         setting_label(&config, CHAT_SETTING_PROVIDER, setting_labels[1], sizeof(setting_labels[1]));
         labels[0] = setting_labels[0]; labels[1] = setting_labels[1];
-        labels[2] = " Settings "; labels[3] = " New chat ";
+        labels[2] = " Connection settings "; labels[3] = " New chat ";
         sel = menu(" CHAT ", labels, 4, sel);
         if (sel == 0) { if (edit_setting(&config, CHAT_SETTING_MODEL)) apply_config(); }
         else if (sel == 1) provider_menu();

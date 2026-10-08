@@ -36,6 +36,7 @@ add_executable(coyote
         ai/chat_settings.c
         ai/chat_layout.c
         ai/wifi_manager.c
+        ai/wifi_scan.c
         ai/http_stream.c
         ai/app_services.c
 )
@@ -108,7 +109,7 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define LWIP_UDP                    1
 #define LWIP_DHCP                   1
 #define LWIP_DNS                    1
-/* Resolve *.local names (the default host is wang.local) with one-shot
+/* Resolve *.local names (a common way to name the chat host) with one-shot
  * multicast DNS queries. */
 #define LWIP_DNS_SUPPORT_MDNS_QUERIES 1
 
