@@ -61,10 +61,8 @@ void handle_keyboard() {
 bool fs_init(void) {
     blockdevice_t *sd = blockdevice_sd_create(spi0, SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN, 125000000/8, true);
     filesystem_t *fat = filesystem_fat_create();
-    if (fs_mount("/", fat, sd) == -1) {
-        if (fs_format(fat, sd) == -1 || fs_mount("/", fat, sd) == -1) return false;
-    }
-    return true;
+    /* A card that does not mount is left alone: never format it. */
+    return fs_mount("/", fat, sd) == 0;
 }
 
 int main() {
