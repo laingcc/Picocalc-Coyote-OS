@@ -421,6 +421,10 @@ static void make_auto_title(const char *src, size_t src_len, char *dst, size_t d
 }
 
 static void save_chat_action(void) {
+    if (chat_model_is_streaming(&chat)) {
+        set_note("busy: Esc cancels");
+        return;
+    }
     size_t count = chat_model_message_count(&chat);
     if (count == 0u) {
         set_note("nothing to save");

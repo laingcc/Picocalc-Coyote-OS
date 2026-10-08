@@ -46,6 +46,8 @@ static int build_paths(const char *dir) {
 
 static int replace_file(void) {
     if (rename(temp_path, file_path) == 0) {
+        /* A stale backup from an earlier interrupted swap is no longer needed. */
+        remove(backup_path);
         return 0;
     }
     /* FAT refuses to rename over an existing file: step the old one aside. */
@@ -256,6 +258,13 @@ static int sanitize_title(char *dst, const char *src) {
     if (len == 0u) {
         return -1;
     }
+    /* Reject control characters: they would break the convs.txt line structure. */
+    for (size_t i = 0u; i < len; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c < 0x20u || c == 0x7fu) {
+            return -1;
+        }
+    }
     size_t copy_len = len > CONV_STORE_TITLE_MAX ? CONV_STORE_TITLE_MAX : len;
     memcpy(dst, src, copy_len);
     dst[copy_len] = '\0';
@@ -338,6 +347,9 @@ static conv_store_status_t parse_messages(file_reader_t *r, chat_model_t *model,
         if (total_conv_bytes > (size_t)CHAT_MAX_MESSAGES * CHAT_MESSAGE_MAX) {
             return CONV_STORE_TOO_LARGE;
         }
+        if (msg_count >= CHAT_MAX_MESSAGES) {
+            return CONV_STORE_TOO_LARGE;
+        }
         if (model != NULL) {
             if (chat_model_append_message(model, role, msg_buf, msg_len) != 0) {
                 return CONV_STORE_CORRUPT;
@@ -347,9 +359,6 @@ static conv_store_status_t parse_messages(file_reader_t *r, chat_model_t *model,
             }
         }
         msg_count++;
-        if (msg_count > CHAT_MAX_MESSAGES) {
-            return CONV_STORE_TOO_LARGE;
-        }
 
         if (res == 1 || strcmp(line_buf, "[conversation]") == 0) {
             break;
