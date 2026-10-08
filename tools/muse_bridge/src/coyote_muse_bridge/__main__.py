@@ -13,8 +13,7 @@ from musegadget import config, identity
 from musegadget.executor import Account, Executor
 
 from .broker import BridgeBroker
-from .http import create_app
-from .http import MIN_TOKEN_CHARS
+from .http import create_app, validate_bridge_token
 from .session import BridgeService
 
 DEFAULT_TOKEN_FILE = Path("/etc/coyote-muse-bridge/token")
@@ -45,8 +44,7 @@ def load_bridge_token(path: Path) -> str:
         except OSError as exc:
             raise ValueError("bridge bearer token is not configured") from exc
     token = token.strip()
-    if len(token) < MIN_TOKEN_CHARS:
-        raise ValueError(f"bridge bearer token must be at least {MIN_TOKEN_CHARS} characters")
+    validate_bridge_token(token)
     return token
 
 

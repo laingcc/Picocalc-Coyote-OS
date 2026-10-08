@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from typing import Any, cast
 import json
 
 from aiohttp.test_utils import TestClient, TestServer
 
 from coyote_muse_bridge.broker import BridgeBusy, BridgeUnavailable, UpstreamError
-from coyote_muse_bridge.http import MAX_BODY_BYTES, create_app
+from coyote_muse_bridge.http import MAX_BODY_BYTES, _authorized, create_app
 
 TOKEN = "bridge-secret-0123456789abcdef012345"
+
+
+def test_utf8_token_strength_and_constant_time_comparison_use_bytes():
+    token = "🧩" * 8
+    app = create_app(Broker(), token)
+    request = cast(Any, SimpleNamespace(
+        app=app, headers={"Authorization": f"Bearer {token}"}))
+    assert _authorized(request)
+    request.headers["Authorization"] = f"Bearer {token[:-1]}x"
+    assert not _authorized(request)
 
 
 class Turn:
@@ -67,7 +79,7 @@ def test_auth_validation_limits_status_mapping_and_health_redaction(monkeypatch)
             for body in invalid:
                 response = await client.post("/v1/chat", data=body, headers=auth)
                 assert response.status == 400
-            assert calls and all(expected == TOKEN for _, expected in calls)
+            assert calls and all(expected == TOKEN.encode("utf-8") for _, expected in calls)
 
             response = await client.post(
                 "/v1/chat", data=b"x" * (MAX_BODY_BYTES + 1), headers=auth,
@@ -159,7 +171,7 @@ def test_prepare_failure_disconnects_accepted_turn(monkeypatch):
         client = await client_for(broker)
 
         async def fail_prepare(self, request):
-            raise ConnectionError("client left before headers")
+            raise RuntimeError("unexpected preparation failure")
 
         monkeypatch.setattr(
             "coyote_muse_bridge.http.web.StreamResponse.prepare", fail_prepare)
@@ -170,6 +182,36 @@ def test_prepare_failure_disconnects_accepted_turn(monkeypatch):
                     headers={"Authorization": f"Bearer {TOKEN}"})
             except Exception:
                 pass
+            assert turn.disconnected
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_unexpected_stream_write_failure_disconnects_accepted_turn(monkeypatch):
+    async def scenario():
+        broker = Broker()
+        turn = Turn([{"type": "done"}])
+        broker.result = turn
+        client = await client_for(broker)
+
+        async def fail_write(self, data):
+            raise RuntimeError("unexpected stream write failure")
+
+        monkeypatch.setattr(
+            "coyote_muse_bridge.http.web.StreamResponse.write", fail_write)
+        try:
+            try:
+                await client.post(
+                    "/v1/chat", json={"text": "x"},
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+            except Exception:
+                pass
+            for _ in range(50):
+                if turn.disconnected:
+                    break
+                await asyncio.sleep(0.01)
             assert turn.disconnected
         finally:
             await client.close()

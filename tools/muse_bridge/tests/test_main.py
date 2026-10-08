@@ -34,3 +34,14 @@ def test_empty_or_missing_bridge_token_is_rejected(tmp_path, monkeypatch):
     short.write_text("too-short")
     with pytest.raises(ValueError):
         load_bridge_token(short)
+
+
+def test_bridge_token_strength_is_measured_in_utf8_bytes(tmp_path, monkeypatch):
+    token_file = tmp_path / "utf8-token"
+    token_file.write_text("🧩" * 8)
+    monkeypatch.delenv("COYOTE_MUSE_BRIDGE_TOKEN", raising=False)
+    assert load_bridge_token(token_file) == "🧩" * 8
+
+    token_file.write_text("🧩" * 7)
+    with pytest.raises(ValueError):
+        load_bridge_token(token_file)

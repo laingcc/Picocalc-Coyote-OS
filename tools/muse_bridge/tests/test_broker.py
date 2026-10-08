@@ -312,6 +312,33 @@ def test_ack_cancellation_and_session_loss_cannot_strand_or_revive_turn():
     asyncio.run(scenario())
 
 
+def test_uncertain_ack_failures_keep_global_turn_quarantined():
+    async def scenario():
+        session = FakeSession()
+        broker = BridgeBroker(lambda: session, reply_timeout=0.05,
+                              turn_timeout=0.1)
+
+        await session.replies.put(ConnectionError("reset after send"))
+        with pytest.raises(UpstreamError):
+            await broker.start_turn("possibly accepted")
+        assert broker.busy
+        with pytest.raises(BridgeBusy):
+            await broker.start_turn("must not overlap")
+        broker.session_lost()
+        assert not broker.busy
+
+        await session.replies.put({"ok": True, "response": {}})
+        with pytest.raises(UpstreamError):
+            await broker.start_turn("malformed acknowledgement")
+        assert broker.busy
+        with pytest.raises(BridgeBusy):
+            await broker.start_turn("still must not overlap")
+        broker.session_lost()
+        assert not broker.busy
+
+    asyncio.run(scenario())
+
+
 def test_malformed_unicode_row_is_dropped_without_losing_session():
     async def scenario():
         session = FakeSession()

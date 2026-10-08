@@ -135,7 +135,8 @@ class BridgeBroker:
             self._ensure_watcher(state)
             raise UpstreamError("Muse acknowledgement timed out") from exc
         except Exception as exc:
-            self._release(state)
+            self._disconnect(state)
+            self._ensure_watcher(state)
             raise UpstreamError("Muse request failed") from exc
 
         if self._active is not state or state.closed:
@@ -149,7 +150,8 @@ class BridgeBroker:
         if isinstance(result, dict) and isinstance(result.get("result"), dict):
             result = result["result"]
         if not isinstance(result, dict) or not isinstance(result.get("message_id"), str):
-            self._release(state)
+            self._disconnect(state)
+            self._ensure_watcher(state)
             raise UpstreamError("Muse acknowledgement had no message id")
 
         state.note_id = result["message_id"]
