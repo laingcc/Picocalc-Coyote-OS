@@ -14,6 +14,7 @@ void test_chat_settings(void);
 void test_chat_layout(void);
 void test_ai_config(void);
 void test_config_store(void);
+void test_conv_store(void);
 void test_http_stream(void);
 void test_wifi_scan(void);
 
@@ -27,6 +28,7 @@ int main(void) {
     test_chat_layout();
     test_ai_config();
     test_config_store();
+    test_conv_store();
     test_http_stream();
     test_wifi_scan();
 
