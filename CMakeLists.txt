@@ -25,6 +25,10 @@ add_executable(coyote
         keyboard_definition.h
         tinyexpr/tinyexpr.c
         config.h
+        ai/json_stream.c
+        ai/http_parser.c
+        ai/ollama_provider.c
+        ai/chat_model.c
 )
 
 ##picocalc spi0
