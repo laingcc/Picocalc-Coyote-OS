@@ -13,6 +13,7 @@ void test_chat_request(void);
 void test_chat_settings(void);
 void test_chat_layout(void);
 void test_ai_config(void);
+void test_config_store(void);
 void test_http_stream(void);
 
 int main(void) {
@@ -24,6 +25,7 @@ int main(void) {
     test_chat_settings();
     test_chat_layout();
     test_ai_config();
+    test_config_store();
     test_http_stream();
 
     printf("%d checks, %d failures\n", g_tests_run, g_tests_failed);

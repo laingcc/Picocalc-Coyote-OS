@@ -10,6 +10,7 @@
 #include "ai/chat_model.h"
 #include "ai/chat_request.h"
 #include "ai/chat_settings.h"
+#include "ai/config_store.h"
 
 #define COLS (LCD_WIDTH / 8)
 #define ROW_H 12
@@ -23,6 +24,7 @@
 #define SCROLL_STEP 4
 #define STREAM_REDRAW_MS 100
 #define NOTE_MAX 30
+#define CONFIG_DIR "/coyote"
 
 /* All chat state is static: the transcript alone is ~36 KB. */
 static chat_model_t chat;
@@ -265,6 +267,8 @@ static void apply_config(void) {
     /* Reconfiguring cancels the request in flight; keep the transcript in step. */
     if (chat_model_is_streaming(&chat)) chat_model_cancel_response(&chat);
     if (app_services_configure(&config) != 0) set_note("settings rejected");
+    /* An unsaved configuration still applies for this session. */
+    else if (config_store_save(&config, CONFIG_DIR) != AI_CONFIG_OK) set_note("settings not saved");
     else note[0] = '\0';
     transcript_dirty = true;
 }
@@ -357,11 +361,17 @@ static void chat_menu(void) {
 /* ---- Entry points -------------------------------------------------------- */
 
 void chat_mode_init(void) {
+    ai_config_status_t loaded;
+
     memset(&chat, 0, sizeof(chat));
     ai_config_init(&config);
+    loaded = config_store_load(&config, CONFIG_DIR);
     chat_request_measure_init(&measure, &config);
     chat_model_init(&chat, chat_request_measure, &measure, OLLAMA_REQUEST_MAX);
     note[0] = '\0'; status_drawn[0] = '\0';
+    /* Saved credentials rejoin Wi-Fi at boot; a bad file leaves the defaults. */
+    if (loaded != AI_CONFIG_OK) set_note("ai.ini unreadable");
+    else if (config.ssid[0]) app_services_configure(&config);
     scroll = 0;
     transcript_dirty = composer_dirty = false;
 }

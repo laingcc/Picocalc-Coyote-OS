@@ -37,7 +37,8 @@ typedef enum {
     AI_CONFIG_INVALID_VALUE,
     AI_CONFIG_UNSUPPORTED_VERSION,
     AI_CONFIG_OUT_OF_RANGE,
-    AI_CONFIG_NO_SPACE
+    AI_CONFIG_NO_SPACE,
+    AI_CONFIG_IO_ERROR
 } ai_config_status_t;
 
 typedef struct {

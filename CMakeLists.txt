@@ -27,6 +27,7 @@ add_executable(coyote
         tinyexpr/tinyexpr.c
         config.h
         ai/ai_config.c
+        ai/config_store.c
         ai/json_stream.c
         ai/http_parser.c
         ai/ollama_provider.c
