@@ -280,7 +280,7 @@ static void check_terminal_semantics(void) {
     CHECK(log.type[0] == JSON_STREAM_EVENT_CONTENT);
     CHECK(json_stream_finish(&stream) == -1);
 
-    /* DONE + CONTENT in a single feed: the later record is ignored. */
+    /* DONE + CONTENT is invalid: exactly one terminal record must end the stream. */
     char combined[512];
     size_t done_len = strlen(done);
     size_t content_len = strlen(content);
@@ -289,11 +289,11 @@ static void check_terminal_semantics(void) {
     for (size_t chunk = 1; chunk <= done_len + content_len; chunk++) {
         memset(&log, 0, sizeof(log));
         json_stream_init(&stream, collect, &log);
-        CHECK(feed_all(&stream, combined, done_len + content_len, chunk) == 0);
-        CHECK(log.count == 1);
+        CHECK(feed_all(&stream, combined, done_len + content_len, chunk) == -1);
+        CHECK(log.count == 2);
         CHECK(log.type[0] == JSON_STREAM_EVENT_DONE);
-        CHECK(json_stream_finish(&stream) == 0);
-        CHECK(log.count == 1);
+        CHECK(log.type[1] == JSON_STREAM_EVENT_ERROR);
+        CHECK(json_stream_finish(&stream) == -1);
     }
 
     /* ERROR + CONTENT in a single feed: the later record is ignored. */
@@ -310,18 +310,26 @@ static void check_terminal_semantics(void) {
     CHECK(json_stream_feed(&stream, done, done_len) == -1); /* latched failure */
     CHECK(log.count == 1);
 
-    /* Duplicate terminal records produce exactly one event. */
+    /* Duplicate terminal records fail after the first terminal event. */
     memcpy(combined, done, done_len);
     memcpy(combined + done_len, done, done_len);
     memset(&log, 0, sizeof(log));
     json_stream_init(&stream, collect, &log);
-    CHECK(feed_all(&stream, combined, done_len * 2u, 1) == 0);
-    CHECK(log.count == 1);
+    CHECK(feed_all(&stream, combined, done_len * 2u, 1) == -1);
+    CHECK(log.count == 2);
     CHECK(log.type[0] == JSON_STREAM_EVENT_DONE);
-    CHECK(json_stream_finish(&stream) == 0);
-    /* A second, separate terminal after DONE is ignored, not re-emitted. */
-    CHECK(json_stream_feed(&stream, content, content_len) == 0);
-    CHECK(log.count == 1);
+    CHECK(log.type[1] == JSON_STREAM_EVENT_ERROR);
+    CHECK(json_stream_finish(&stream) == -1);
+
+    /* A later record supplied after DONE also latches failure. */
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, done, done_len) == 0);
+    CHECK(json_stream_feed(&stream, content, content_len) == -1);
+    CHECK(log.count == 2);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_DONE);
+    CHECK(log.type[1] == JSON_STREAM_EVENT_ERROR);
+    CHECK(json_stream_finish(&stream) == -1);
 }
 
 static void check_embedded_nul(void) {
@@ -371,6 +379,7 @@ static void check_null_preconditions(void) {
     char buffer[16];
 
     memset(&log, 0, sizeof(log));
+    json_stream_init(NULL, collect, &log);
     json_stream_init(&stream, collect, &log);
 
     CHECK(json_stream_feed(NULL, "x", 1u) == -1);

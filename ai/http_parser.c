@@ -281,7 +281,7 @@ static int parse_head(http_parser_t *parser) {
             return -1; /* repeated CR or embedded newline */
         }
     }
-    if (line_length < 12u ||
+    if (line_length < 13u ||
         (memcmp(base, "HTTP/1.0 ", 9u) != 0 && memcmp(base, "HTTP/1.1 ", 9u) != 0)) {
         return -1; /* only HTTP/1.0 and HTTP/1.1 are understood */
     }
@@ -293,7 +293,7 @@ static int parse_head(http_parser_t *parser) {
     if (status < 100 || status > 599) {
         return -1;
     }
-    if (line_length > 12u && code[3] != ' ') {
+    if (code[3] != ' ') {
         return -1;
     }
     parser->head.status_code = status;
@@ -365,6 +365,9 @@ static void emit_body(http_parser_t *parser, const char *data, size_t length) {
 }
 
 void http_parser_init(http_parser_t *parser, http_head_callback_t on_head, http_body_callback_t on_body, void *context) {
+    if (parser == NULL) {
+        return;
+    }
     memset(parser, 0, sizeof(*parser));
     parser->state = HTTP_PARSER_STATE_HEADERS;
     parser->on_head = on_head;
