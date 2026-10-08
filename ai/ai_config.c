@@ -124,7 +124,7 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
         case KEY_PASSWORD:
             return copy_value(parser, id, config->password, sizeof(config->password), value);
         case KEY_PROVIDER:
-            if (strcmp(value, "ollama") != 0 && strcmp(value, "muse") != 0) {
+            if (strcmp(value, "ollama") != 0 && strcmp(value, "muse") != 0 && strcmp(value, "deepseek") != 0) {
                 return fail(parser, AI_CONFIG_INVALID_VALUE, id);
             }
             return copy_value(parser, id, config->provider, sizeof(config->provider), value);
@@ -359,7 +359,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         !serializable_text(config->ssid, sizeof(config->ssid), 1) ||
         !serializable_text(config->password, sizeof(config->password), 1) ||
         !serializable_text(config->provider, sizeof(config->provider), 0) ||
-        (strcmp(config->provider, "ollama") != 0 && strcmp(config->provider, "muse") != 0) ||
+        (strcmp(config->provider, "ollama") != 0 && strcmp(config->provider, "muse") != 0 && strcmp(config->provider, "deepseek") != 0) ||
         !serializable_text(config->host, sizeof(config->host), 1) ||
         !serializable_text(config->model, sizeof(config->model), 1) ||
         !serializable_text(config->bearer_token, sizeof(config->bearer_token), 1) ||

@@ -50,9 +50,10 @@ static void check_text_fields(void) {
     /* Rejections leave the old value in place. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.host, "192.168.1.20");
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "deepseek");
     CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "openai") == AI_CONFIG_INVALID_VALUE);
-    CHECK_STR_EQ(config.provider, "ollama");
+    CHECK_STR_EQ(config.provider, "deepseek");
     CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, " padded") == AI_CONFIG_INVALID_VALUE);
     CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, "padded ") == AI_CONFIG_INVALID_VALUE);
     CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, "two\nlines") == AI_CONFIG_INVALID_VALUE);

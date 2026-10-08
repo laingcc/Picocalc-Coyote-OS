@@ -8,6 +8,7 @@ int g_tests_failed = 0;
 void test_json_stream(void);
 void test_http_parser(void);
 void test_ollama_provider(void);
+void test_deepseek_provider(void);
 void test_chat_model(void);
 void test_chat_request(void);
 void test_chat_settings(void);
@@ -21,6 +22,7 @@ int main(void) {
     test_json_stream();
     test_http_parser();
     test_ollama_provider();
+    test_deepseek_provider();
     test_chat_model();
     test_chat_request();
     test_chat_settings();

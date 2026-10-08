@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ai/deepseek_provider.h"
 #include "ai/ollama_provider.h"
 
 typedef struct {
@@ -15,6 +16,7 @@ static const setting_info_t settings[CHAT_SETTING_COUNT] = {
     {"Model", "model"},
     {"Host", "host"},
     {"Port", "port"},
+    {"Bearer token", "bearer_token"},
     {"SSID", "ssid"},
     {"Password", "password"},
     {"Connect ms", "connect_timeout_ms"},
@@ -37,11 +39,11 @@ const char *chat_settings_label(chat_setting_t field) {
 }
 
 int chat_settings_is_secret(chat_setting_t field) {
-    return field == CHAT_SETTING_PASSWORD;
+    return field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_BEARER_TOKEN;
 }
 
 int chat_settings_allows_empty(chat_setting_t field) {
-    return field == CHAT_SETTING_MODEL || field == CHAT_SETTING_SSID || field == CHAT_SETTING_PASSWORD;
+    return field == CHAT_SETTING_MODEL || field == CHAT_SETTING_SSID || field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_BEARER_TOKEN;
 }
 
 static ai_config_status_t precheck(chat_setting_t field, const char *value) {
@@ -57,10 +59,10 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
     if (length > 0u && (value[0] == ' ' || value[length - 1u] == ' ')) {
         return AI_CONFIG_INVALID_VALUE;
     }
-    if (field == CHAT_SETTING_PROVIDER && strcmp(value, "ollama") != 0) {
+    if (field == CHAT_SETTING_PROVIDER && strcmp(value, "ollama") != 0 && strcmp(value, "muse") != 0 && strcmp(value, "deepseek") != 0) {
         return AI_CONFIG_INVALID_VALUE;
     }
-    if (field == CHAT_SETTING_MODEL && length > OLLAMA_MODEL_MAX) {
+    if (field == CHAT_SETTING_MODEL && length > DEEPSEEK_MODEL_MAX) {
         return AI_CONFIG_VALUE_TOO_LONG;
     }
     return AI_CONFIG_OK;
@@ -79,6 +81,9 @@ static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *
             break;
         case CHAT_SETTING_PORT:
             config->port = from->port;
+            break;
+        case CHAT_SETTING_BEARER_TOKEN:
+            memcpy(config->bearer_token, from->bearer_token, sizeof(config->bearer_token));
             break;
         case CHAT_SETTING_SSID:
             memcpy(config->ssid, from->ssid, sizeof(config->ssid));
@@ -157,6 +162,9 @@ size_t chat_settings_format(const ai_config_t *config, chat_setting_t field, cha
             break;
         case CHAT_SETTING_PORT:
             written = snprintf(out, capacity, "%u", (unsigned)config->port);
+            break;
+        case CHAT_SETTING_BEARER_TOKEN:
+            written = snprintf(out, capacity, "%s", config->bearer_token[0] != '\0' ? "********" : "");
             break;
         case CHAT_SETTING_SSID:
             written = snprintf(out, capacity, "%s", config->ssid);

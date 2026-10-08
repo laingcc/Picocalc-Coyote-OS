@@ -155,6 +155,7 @@ typedef struct {
     const char *method;
     const char *path;
     const char *content_type;
+    const char *bearer_token;
     provider_request_t body;
     http_stream_sink_t sink;
     uint32_t connect_timeout_ms; /* resolve + connect */
