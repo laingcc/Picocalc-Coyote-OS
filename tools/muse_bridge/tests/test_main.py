@@ -13,11 +13,13 @@ def test_cli_defaults_to_loopback_and_lan_requires_explicit_bind(tmp_path, monke
     assert parse_args(["--bind", "0.0.0.0"]).bind == "0.0.0.0"
 
     token_file = tmp_path / "token"
-    token_file.write_text("file-secret\n")
+    file_token = "f" * 32
+    env_token = "e" * 32
+    token_file.write_text(file_token + "\n")
     monkeypatch.delenv("COYOTE_MUSE_BRIDGE_TOKEN", raising=False)
-    assert load_bridge_token(token_file) == "file-secret"
-    monkeypatch.setenv("COYOTE_MUSE_BRIDGE_TOKEN", "env-secret")
-    assert load_bridge_token(token_file) == "env-secret"
+    assert load_bridge_token(token_file) == file_token
+    monkeypatch.setenv("COYOTE_MUSE_BRIDGE_TOKEN", env_token)
+    assert load_bridge_token(token_file) == env_token
 
 
 def test_empty_or_missing_bridge_token_is_rejected(tmp_path, monkeypatch):
@@ -28,3 +30,7 @@ def test_empty_or_missing_bridge_token_is_rejected(tmp_path, monkeypatch):
     empty.write_text("\n")
     with pytest.raises(ValueError):
         load_bridge_token(empty)
+    short = tmp_path / "short"
+    short.write_text("too-short")
+    with pytest.raises(ValueError):
+        load_bridge_token(short)

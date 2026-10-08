@@ -8,6 +8,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from coyote_muse_bridge.broker import BridgeBusy, BridgeUnavailable, UpstreamError
 from coyote_muse_bridge.http import MAX_BODY_BYTES, create_app
 
+TOKEN = "bridge-secret-0123456789abcdef012345"
+
 
 class Turn:
     def __init__(self, events):
@@ -37,7 +39,7 @@ class Broker:
         return self.result
 
 
-async def client_for(broker, token="bridge-secret"):
+async def client_for(broker, token=TOKEN):
     client = TestClient(TestServer(create_app(broker, token)))
     await client.start_server()
     return client
@@ -50,11 +52,11 @@ def test_auth_validation_limits_status_mapping_and_health_redaction(monkeypatch)
         try:
             assert (await client.post("/v1/chat", json={"text": "x"})).status == 401
             assert (await client.post("/v1/chat", json={"text": "x"},
-                                      headers={"Authorization": "Basic bridge-secret"})).status == 401
+                                      headers={"Authorization": f"Basic {TOKEN}"})).status == 401
             calls = []
             monkeypatch.setattr("coyote_muse_bridge.http.hmac.compare_digest",
                                 lambda supplied, expected: calls.append((supplied, expected)) or supplied == expected)
-            auth = {"Authorization": "Bearer bridge-secret"}
+            auth = {"Authorization": f"Bearer {TOKEN}"}
             invalid = [
                 b"not-json",
                 json.dumps({"text": ""}).encode(),
@@ -65,7 +67,7 @@ def test_auth_validation_limits_status_mapping_and_health_redaction(monkeypatch)
             for body in invalid:
                 response = await client.post("/v1/chat", data=body, headers=auth)
                 assert response.status == 400
-            assert calls and all(expected == "bridge-secret" for _, expected in calls)
+            assert calls and all(expected == TOKEN for _, expected in calls)
 
             response = await client.post(
                 "/v1/chat", data=b"x" * (MAX_BODY_BYTES + 1), headers=auth,
@@ -79,7 +81,7 @@ def test_auth_validation_limits_status_mapping_and_health_redaction(monkeypatch)
             health = await client.get("/health")
             assert health.status == 200
             body = await health.text()
-            assert "bridge-secret" not in body and "Authorization" not in body
+            assert TOKEN not in body and "Authorization" not in body
             assert json.loads(body) == {"ok": True, "connected": True, "busy": False}
         finally:
             await client.close()
@@ -104,7 +106,7 @@ def test_stream_is_compact_ndjson_and_each_event_is_flushed():
         try:
             response = await client.post(
                 "/v1/chat", json={"text": "hello", "session_id": "side-1"},
-                headers={"Authorization": "Bearer bridge-secret"})
+                headers={"Authorization": f"Bearer {TOKEN}"})
             assert response.status == 200
             assert response.headers["Content-Type"].startswith("application/x-ndjson")
             assert await asyncio.wait_for(response.content.readline(), 0.2) == b'{"type":"start","message_id":"m"}\n'
@@ -134,7 +136,7 @@ def test_client_disconnect_marks_turn_without_claiming_upstream_cancellation():
         client = await client_for(broker)
         try:
             response = await client.post("/v1/chat", json={"text": "x"},
-                                         headers={"Authorization": "Bearer bridge-secret"})
+                                         headers={"Authorization": f"Bearer {TOKEN}"})
             await response.content.readline()
             await entered.wait()
             response.close()
@@ -142,6 +144,32 @@ def test_client_disconnect_marks_turn_without_claiming_upstream_cancellation():
                 if turn.disconnected:
                     break
                 await asyncio.sleep(0.01)
+            assert turn.disconnected
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_prepare_failure_disconnects_accepted_turn(monkeypatch):
+    async def scenario():
+        broker = Broker()
+        turn = Turn([])
+        broker.result = turn
+        client = await client_for(broker)
+
+        async def fail_prepare(self, request):
+            raise ConnectionError("client left before headers")
+
+        monkeypatch.setattr(
+            "coyote_muse_bridge.http.web.StreamResponse.prepare", fail_prepare)
+        try:
+            try:
+                await client.post(
+                    "/v1/chat", json={"text": "x"},
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+            except Exception:
+                pass
             assert turn.disconnected
         finally:
             await client.close()

@@ -264,17 +264,67 @@ def test_disconnect_quarantines_late_events_before_next_turn():
     asyncio.run(scenario())
 
 
-def test_queue_overflow_terminates_and_releases_the_turn():
+def test_queue_overflow_quarantines_turn_until_upstream_settles():
     async def scenario():
         session = FakeSession()
         await session.replies.put({"ok": True, "response": {"message_id": "note"}})
-        broker = BridgeBroker(lambda: session, queue_size=1, reply_timeout=1, turn_timeout=1)
+        broker = BridgeBroker(
+            lambda: session, queue_size=1, reply_timeout=1,
+            turn_timeout=1, settle_timeout=0.005)
         turn = await broker.start_turn("overflow")
         watcher = turn._state.watcher
         broker.feed_event(ev("delta.text_append", "reply", "note", "text"))
         assert await asyncio.wait_for(collect(turn), 1) == []
         await asyncio.sleep(0)
+        assert broker.busy
+        with pytest.raises(BridgeBusy):
+            await broker.start_turn("must wait")
+        broker.feed_event(ev("message.assistant", "reply", "note", "text"))
+        await asyncio.sleep(0.02)
         assert not broker.busy
         assert watcher is not None and watcher.done()
+
+    asyncio.run(scenario())
+
+
+def test_ack_cancellation_and_session_loss_cannot_strand_or_revive_turn():
+    async def scenario():
+        session = FakeSession()
+        broker = BridgeBroker(lambda: session, ack_timeout=1, reply_timeout=0.02,
+                              turn_timeout=0.05)
+        starting = asyncio.create_task(broker.start_turn("cancelled"))
+        await asyncio.sleep(0)
+        starting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+        assert broker.busy
+        broker.session_lost()
+        assert not broker.busy
+
+        racing = asyncio.create_task(broker.start_turn("race"))
+        await asyncio.sleep(0)
+        broker.session_lost()
+        await session.replies.put({"ok": True, "response": {"message_id": "late-note"}})
+        with pytest.raises((BridgeUnavailable, UpstreamError)):
+            await racing
+        assert not broker.busy
+
+    asyncio.run(scenario())
+
+
+def test_malformed_unicode_row_is_dropped_without_losing_session():
+    async def scenario():
+        session = FakeSession()
+        await session.replies.put({"ok": True, "response": {"message_id": "note"}})
+        broker = BridgeBroker(lambda: session, settle_timeout=0.005,
+                              reply_timeout=1, turn_timeout=1)
+        turn = await broker.start_turn("unicode")
+        broker.feed_event(ev("delta.text_append", "bad", "note", "\ud800oops"))
+        broker.feed_event(ev("message.assistant", "good", "note", "safe"))
+        assert await asyncio.wait_for(collect(turn), 1) == [
+            {"type": "start", "message_id": "good"},
+            {"type": "text_delta", "text": "safe"},
+            {"type": "done"},
+        ]
 
     asyncio.run(scenario())

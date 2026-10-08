@@ -123,12 +123,23 @@ class BridgeBroker:
         try:
             reply = await asyncio.wait_for(
                 session.send_chat(text, session_id), timeout=self._ack_timeout)
+        except asyncio.CancelledError:
+            # The POST may already have reached Muse. Keep this turn isolated
+            # until its timeout instead of allowing its late events into a new
+            # client's turn.
+            self._disconnect(state)
+            self._ensure_watcher(state)
+            raise
         except TimeoutError as exc:
-            self._release(state)
+            self._disconnect(state)
+            self._ensure_watcher(state)
             raise UpstreamError("Muse acknowledgement timed out") from exc
         except Exception as exc:
             self._release(state)
             raise UpstreamError("Muse request failed") from exc
+
+        if self._active is not state or state.closed:
+            raise BridgeUnavailable("Muse session changed while acknowledging the turn")
 
         if not isinstance(reply, dict) or not reply.get("ok"):
             status = reply.get("status") if isinstance(reply, dict) else None
@@ -149,7 +160,7 @@ class BridgeBroker:
         state.pending.clear()
         for event in pending:
             self._process(state, event)
-        state.watcher = asyncio.create_task(self._watch(state))
+        self._ensure_watcher(state)
         return Turn(self, state)
 
     def feed_event(self, event: dict) -> None:
@@ -180,11 +191,12 @@ class BridgeBroker:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
-        # Match the official ESP32 parser: payload fields override envelope
-        # fields when both are present.
-        kind = self._first_string(payload, "event", "event_name")
+        # The envelope event is the stream discriminator. Payload event_name
+        # may describe the persisted message and must not turn a delta into a
+        # completed message.
+        kind = self._first_string(event, "event", "event_name")
         if not kind:
-            kind = self._first_string(event, "event", "event_name")
+            kind = self._first_string(payload, "event", "event_name")
         now = time.monotonic()
 
         if kind in ("agent.status", "task.status"):
@@ -209,16 +221,24 @@ class BridgeBroker:
         ):
             return
         message_id = self._field(event, payload, "message_id", "id")
-        if not message_id:
+        if not message_id or not self._valid_utf8(message_id):
             return
         parent = self._field(
             event, payload, "reply_to_message_id", "parent_message_id")
+        if parent and not self._valid_utf8(parent):
+            return
         if not self._related(state, message_id, parent):
             return
 
         ready = self._field_value(event, payload, "display_text_ready")
         if kind == "message.assistant" and ready is False:
             return
+
+        text = ""
+        if kind in ("delta.text_append", "message.assistant"):
+            text = self._field(event, payload, "display_text", "content", "text")
+            if text and not self._valid_utf8(text):
+                return
 
         if message_id not in state.accepted:
             if len(state.accepted) >= MAX_TRACKED_MESSAGES:
@@ -228,7 +248,6 @@ class BridgeBroker:
         state.last_event = now
 
         if kind == "delta.text_append":
-            text = self._field(event, payload, "display_text", "content", "text")
             if text:
                 state.accumulated[message_id] = self._bounded_text(
                     state.accumulated.get(message_id, "") + text)
@@ -240,7 +259,6 @@ class BridgeBroker:
             if message_id in state.seen_complete:
                 state.changed.set()
                 return
-            text = self._field(event, payload, "display_text", "content", "text")
             if text:
                 existing = state.accumulated.get(message_id, "")
                 if text != existing:
@@ -270,6 +288,14 @@ class BridgeBroker:
     @staticmethod
     def _field_value(top: dict, payload: dict, name: str):
         return payload[name] if name in payload else top.get(name)
+
+    @staticmethod
+    def _valid_utf8(value: str) -> bool:
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return True
 
     def _related(self, state: _TurnState, message_id: str, parent: str) -> bool:
         if message_id in state.rejected:
@@ -335,8 +361,14 @@ class BridgeBroker:
         try:
             state.queue.put_nowait(event)
         except asyncio.QueueFull:
-            # Never block the Muse session's global event reader.
-            self._release(state)
+            # Never block the global reader, but do not release the active slot:
+            # Muse has no cancellation API and late parentless events could be
+            # mistaken for a new turn. Detach and quarantine until settle/loss.
+            self._disconnect(state)
+
+    def _ensure_watcher(self, state: _TurnState) -> None:
+        if state.watcher is None and not state.closed:
+            state.watcher = asyncio.create_task(self._watch(state))
 
     def _finish(self, state: _TurnState) -> None:
         if state.closed:
@@ -375,6 +407,9 @@ class BridgeBroker:
         state.detached = True
         while not state.queue.empty():
             state.queue.get_nowait()
+        # Wake a currently waiting HTTP iterator while the remote turn remains
+        # quarantined in self._active.
+        state.queue.put_nowait(_END)
         # Deliberately do not cancel the Muse request: the upstream API exposes
         # no cancellation contract. The active slot stays quarantined until the
         # reply settles or times out.
