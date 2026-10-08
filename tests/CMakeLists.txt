@@ -11,6 +11,7 @@ project(coyote_ai_tests C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
@@ -19,6 +20,7 @@ endif()
 set(COYOTE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_library(coyote_ai STATIC
+    "${COYOTE_ROOT}/ai/ai_config.c"
     "${COYOTE_ROOT}/ai/json_stream.c"
     "${COYOTE_ROOT}/ai/http_parser.c"
     "${COYOTE_ROOT}/ai/ollama_provider.c"
@@ -35,6 +37,7 @@ add_executable(coyote_ai_tests
     test_http_parser.c
     test_ollama_provider.c
     test_chat_model.c
+    test_ai_config.c
 )
 target_link_libraries(coyote_ai_tests PRIVATE coyote_ai)
 target_compile_options(coyote_ai_tests PRIVATE -Wall -Wextra -Werror)
