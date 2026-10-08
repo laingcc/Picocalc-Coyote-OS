@@ -25,6 +25,8 @@ add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/ai/http_parser.c"
     "${COYOTE_ROOT}/ai/ollama_provider.c"
     "${COYOTE_ROOT}/ai/chat_model.c"
+    "${COYOTE_ROOT}/ai/http_stream.c"
+    "${COYOTE_ROOT}/ai/wifi_manager.c"
 )
 target_include_directories(coyote_ai PUBLIC "${COYOTE_ROOT}")
 target_compile_options(coyote_ai PRIVATE -Wall -Wextra -Werror)
@@ -38,6 +40,7 @@ add_executable(coyote_ai_tests
     test_ollama_provider.c
     test_chat_model.c
     test_ai_config.c
+    test_http_stream.c
 )
 target_link_libraries(coyote_ai_tests PRIVATE coyote_ai)
 target_compile_options(coyote_ai_tests PRIVATE -Wall -Wextra -Werror)

@@ -22,7 +22,13 @@ typedef struct {
 
 typedef enum { MODE_CALCULATOR, MODE_TEXT } app_mode_t;
 
+/* Called repeatedly while a modal menu or prompt waits for input, so
+ * background work (networking) keeps running.  Must be cheap and non-blocking
+ * and must not open another menu. */
+typedef void (*ui_idle_hook_t)(void);
+
 void ui_init();
+void ui_set_idle_hook(ui_idle_hook_t hook);
 void update_active_tab(int new_tab);
 TabContext* ui_get_tab_context(int tab_idx);
 int ui_get_active_tab_idx();
