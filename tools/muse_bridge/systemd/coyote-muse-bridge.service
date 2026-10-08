@@ -1,0 +1,21 @@
+[Unit]
+Description=Coyote authenticated Muse bridge
+Documentation=file:/opt/coyote-muse-bridge/README.md
+Wants=network-online.target
+After=network-online.target bluetooth.target
+Conflicts=musegadget.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/coyote-muse-bridge/environment
+ExecStart=/opt/coyote-muse-bridge/.venv/bin/coyote-muse-bridge --token-file /etc/coyote-muse-bridge/token
+RuntimeDirectory=coyote-muse-bridge
+RuntimeDirectoryMode=0750
+StateDirectory=musegadget
+StateDirectoryMode=0700
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
