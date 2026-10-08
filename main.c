@@ -15,6 +15,7 @@
 #include "filesystem/fat.h"
 #include "filesystem/vfs.h"
 #include "dirent.h"
+#include "ai/app_services.h"
 
 #define COYOTE_DIR "/coyote"
 
@@ -80,5 +81,8 @@ int main() {
         else closedir(dir);
     }
 
-    while (1) { handle_keyboard(); sleep_ms(20); }
+    app_services_init();
+    ui_set_idle_hook(app_services_poll);
+
+    while (1) { handle_keyboard(); app_services_poll(); sleep_ms(20); }
 }

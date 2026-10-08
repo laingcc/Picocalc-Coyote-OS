@@ -28,6 +28,10 @@ int tab_count = MAX_TABS;
 int active_tab = 0;
 TabContext tab_contexts[MAX_TABS];
 static app_mode_t current_mode = MODE_CALCULATOR;
+static ui_idle_hook_t idle_hook;
+
+void ui_set_idle_hook(ui_idle_hook_t hook) { idle_hook = hook; }
+static void ui_idle(void) { if (idle_hook) idle_hook(); }
 
 static void draw_menu_frame(int x, int y, int w, int h, const char* title) {
     draw_rect_spi(x, y, x + w * 8, y + h * 12, BLACK);
@@ -73,6 +77,7 @@ static bool run_input_dialog(const char* title, char* out, int max_len) {
     draw_menu_frame(x, y, MENU_W, 5, title);
     draw_input_field(x, y, MENU_W, 2, input, maxd);
     while (1) {
+        ui_idle();
         int c = lcd_getc(0);
         if (c == KEY_ENTER && len > 0) {
             strncpy(out, input, max_len-1); out[max_len-1] = '\0';
@@ -96,6 +101,7 @@ static int run_menu(int x, int y, int w, int h, const char* title, MenuItem* ite
     draw_menu_frame(x, y, w, h, title);
     for (int i = 0; i < cnt; i++) draw_menu_opt(x, y, w, 2+i, items[i].label, i == sel);
     while (1) {
+        ui_idle();
         int c = lcd_getc(0);
         if (c == KEY_UP && sel > 0) sel--;
         else if (c == KEY_DOWN && sel < cnt-1) sel++;
