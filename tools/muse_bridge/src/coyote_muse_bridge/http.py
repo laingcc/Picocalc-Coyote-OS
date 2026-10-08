@@ -11,6 +11,7 @@ from aiohttp import web
 from .broker import BridgeBusy, BridgeUnavailable, UpstreamError
 
 MAX_BODY_BYTES = 16 * 1024
+MIN_TOKEN_CHARS = 32
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 BROKER_KEY = web.AppKey("broker")
 TOKEN_KEY = web.AppKey("bridge_token", str)
@@ -81,10 +82,10 @@ async def chat(request: web.Request) -> web.StreamResponse:
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
         })
-    await response.prepare(request)
-    iterator = turn.events().__aiter__()
     pending: asyncio.Task | None = None
     try:
+        await response.prepare(request)
+        iterator = turn.events().__aiter__()
         while True:
             if pending is None:
                 pending = asyncio.create_task(iterator.__anext__())
@@ -104,19 +105,17 @@ async def chat(request: web.Request) -> web.StreamResponse:
                 pending = None
             line = json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode() + b"\n"
             await response.write(line)
+        await response.write_eof()
     except (ConnectionError, asyncio.CancelledError):
         turn.disconnect()
         raise
     finally:
         if pending is not None:
             pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
         transport = request.transport
         if transport is None or transport.is_closing():
             turn.disconnect()
-    try:
-        await response.write_eof()
-    except ConnectionError:
-        turn.disconnect()
     return response
 
 
@@ -130,8 +129,8 @@ async def health(request: web.Request) -> web.Response:
 
 
 def create_app(broker, bridge_token: str) -> web.Application:
-    if not isinstance(bridge_token, str) or not bridge_token:
-        raise ValueError("a non-empty bridge bearer token is required")
+    if not isinstance(bridge_token, str) or len(bridge_token) < MIN_TOKEN_CHARS:
+        raise ValueError(f"bridge bearer token must be at least {MIN_TOKEN_CHARS} characters")
     app = web.Application(client_max_size=MAX_BODY_BYTES)
     app[BROKER_KEY] = broker
     app[TOKEN_KEY] = bridge_token
