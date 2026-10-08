@@ -438,8 +438,9 @@ static int parse_record(json_stream_t *stream) {
     }
 
     if (has_error) {
-        emit(stream, JSON_STREAM_EVENT_ERROR, stream->error_text, stream->error_length);
+        stream->failed = true;
         stream->phase = JSON_STREAM_PHASE_ERROR;
+        emit(stream, JSON_STREAM_EVENT_ERROR, stream->error_text, stream->error_length);
         return 0;
     }
     if (!has_content && !has_done) {
@@ -449,8 +450,8 @@ static int parse_record(json_stream_t *stream) {
         emit(stream, JSON_STREAM_EVENT_CONTENT, stream->payload, stream->payload_length);
     }
     if (has_done && done_value) {
-        emit(stream, JSON_STREAM_EVENT_DONE, NULL, 0u);
         stream->phase = JSON_STREAM_PHASE_DONE;
+        emit(stream, JSON_STREAM_EVENT_DONE, NULL, 0u);
     }
     return 0;
 }

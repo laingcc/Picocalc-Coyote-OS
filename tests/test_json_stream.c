@@ -10,6 +10,13 @@ typedef struct {
     size_t length[16];
 } event_log_t;
 
+typedef struct {
+    json_stream_t *stream;
+    size_t events;
+    size_t done_events;
+    int nested_finish;
+} reentrant_log_t;
+
 static void collect(void *context, const json_stream_event_t *event) {
     event_log_t *log = (event_log_t *)context;
     if (log->count < 16) {
@@ -23,6 +30,17 @@ static void collect(void *context, const json_stream_event_t *event) {
         }
     }
     log->count++;
+}
+
+static void collect_reentrant(void *context, const json_stream_event_t *event) {
+    reentrant_log_t *log = (reentrant_log_t *)context;
+    log->events++;
+    if (event->type == JSON_STREAM_EVENT_DONE) {
+        log->done_events++;
+        if (log->done_events == 1u) {
+            log->nested_finish = json_stream_finish(log->stream);
+        }
+    }
 }
 
 /* Feed the whole input in fixed-size chunks; returns -1 if any feed fails. */
@@ -146,6 +164,7 @@ static void check_records(void) {
         CHECK(log.count == 1);
         CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
         CHECK_STR_EQ(log.data[0], "model not found");
+        CHECK(json_stream_failed(&stream));
         CHECK(json_stream_finish(&stream) == -1);
     }
 
@@ -373,6 +392,22 @@ static void check_embedded_nul(void) {
     CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
 }
 
+static void check_terminal_state_is_latched_before_callback(void) {
+    const char *done = "{\"done\":true}\n";
+    json_stream_t stream;
+    reentrant_log_t log;
+
+    memset(&log, 0, sizeof(log));
+    log.stream = &stream;
+    log.nested_finish = -1;
+    json_stream_init(&stream, collect_reentrant, &log);
+    CHECK(json_stream_feed(&stream, done, strlen(done)) == 0);
+    CHECK(log.nested_finish == 0);
+    CHECK(log.events == 1u);
+    CHECK(log.done_events == 1u);
+    CHECK(json_stream_finish(&stream) == 0);
+}
+
 static void check_null_preconditions(void) {
     event_log_t log;
     json_stream_t stream;
@@ -402,6 +437,7 @@ void test_json_stream(void) {
     check_malformed();
     check_oversized_and_truncated();
     check_terminal_semantics();
+    check_terminal_state_is_latched_before_callback();
     check_embedded_nul();
     check_null_preconditions();
 }

@@ -222,7 +222,11 @@ int ollama_provider_finish(ollama_provider_t *provider) {
     if (provider == NULL || !provider->built) {
         return -1;
     }
-    return json_stream_finish(&provider->stream);
+    int rc = json_stream_finish(&provider->stream);
+    if (rc != 0) {
+        provider->failed = true;
+    }
+    return rc;
 }
 
 bool ollama_provider_is_done(const ollama_provider_t *provider) {
