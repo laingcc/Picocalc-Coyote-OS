@@ -11,6 +11,12 @@
 
 static const char HEX_DIGITS[] = "0123456789abcdef";
 
+/* Keep each payload in one place so the emitted length can never drift from
+ * the literal it describes. */
+#define JSON_STREAM_ERROR_OVERSIZED "record exceeds maximum length"
+#define JSON_STREAM_ERROR_MALFORMED "malformed NDJSON record"
+#define JSON_STREAM_ERROR_TRUNCATED "truncated NDJSON record"
+
 static int hex_value(char c) {
     if (c >= '0' && c <= '9') {
         return c - '0';
@@ -166,6 +172,9 @@ static int parse_string(const char **cursor, char *out, size_t out_cap, size_t *
             uint32_t cp;
             if (decode_escape(body, length, &i, &cp) != 0) {
                 return -1;
+            }
+            if (cp == 0u) {
+                return -1; /* embedded U+0000 would alias a C-string terminator */
             }
             encoded_len = encode_utf8(cp, encoded);
         } else {
@@ -430,6 +439,7 @@ static int parse_record(json_stream_t *stream) {
 
     if (has_error) {
         emit(stream, JSON_STREAM_EVENT_ERROR, stream->error_text, stream->error_length);
+        stream->phase = JSON_STREAM_PHASE_ERROR;
         return 0;
     }
     if (!has_content && !has_done) {
@@ -440,6 +450,7 @@ static int parse_record(json_stream_t *stream) {
     }
     if (has_done && done_value) {
         emit(stream, JSON_STREAM_EVENT_DONE, NULL, 0u);
+        stream->phase = JSON_STREAM_PHASE_DONE;
     }
     return 0;
 }
@@ -472,15 +483,26 @@ void json_stream_init(json_stream_t *stream, json_stream_callback_t callback, vo
 }
 
 int json_stream_feed(json_stream_t *stream, const char *data, size_t length) {
-    if (stream->failed) {
+    if (stream == NULL) {
         return -1;
+    }
+    if (data == NULL && length > 0u) {
+        return -1;
+    }
+    if (stream->failed || stream->phase == JSON_STREAM_PHASE_ERROR) {
+        return -1;
+    }
+    if (stream->phase == JSON_STREAM_PHASE_DONE) {
+        return 0; /* terminal success: discard any later bytes */
     }
     for (size_t i = 0; i < length; i++) {
         char c = data[i];
         if (c == '\n') {
             if (stream->overflow) {
                 stream->failed = true;
-                emit(stream, JSON_STREAM_EVENT_ERROR, "record exceeds maximum length", 30u);
+                stream->phase = JSON_STREAM_PHASE_ERROR;
+                emit(stream, JSON_STREAM_EVENT_ERROR, JSON_STREAM_ERROR_OVERSIZED,
+                     sizeof(JSON_STREAM_ERROR_OVERSIZED) - 1u);
                 return -1;
             }
             stream->record[stream->record_length] = '\0';
@@ -489,8 +511,13 @@ int json_stream_feed(json_stream_t *stream, const char *data, size_t length) {
             stream->overflow = false;
             if (rc != 0) {
                 stream->failed = true;
-                emit(stream, JSON_STREAM_EVENT_ERROR, "malformed NDJSON record", 22u);
+                stream->phase = JSON_STREAM_PHASE_ERROR;
+                emit(stream, JSON_STREAM_EVENT_ERROR, JSON_STREAM_ERROR_MALFORMED,
+                     sizeof(JSON_STREAM_ERROR_MALFORMED) - 1u);
                 return -1;
+            }
+            if (stream->phase != JSON_STREAM_PHASE_OPEN) {
+                return 0; /* terminal reached; ignore the rest of this chunk */
             }
         } else if (stream->record_length < JSON_STREAM_RECORD_MAX) {
             stream->record[stream->record_length++] = c;
@@ -502,12 +529,20 @@ int json_stream_feed(json_stream_t *stream, const char *data, size_t length) {
 }
 
 int json_stream_finish(json_stream_t *stream) {
-    if (stream->failed) {
+    if (stream == NULL) {
         return -1;
+    }
+    if (stream->failed || stream->phase == JSON_STREAM_PHASE_ERROR) {
+        return -1;
+    }
+    if (stream->phase == JSON_STREAM_PHASE_DONE) {
+        return 0;
     }
     if (stream->overflow) {
         stream->failed = true;
-        emit(stream, JSON_STREAM_EVENT_ERROR, "record exceeds maximum length", 30u);
+        stream->phase = JSON_STREAM_PHASE_ERROR;
+        emit(stream, JSON_STREAM_EVENT_ERROR, JSON_STREAM_ERROR_OVERSIZED,
+             sizeof(JSON_STREAM_ERROR_OVERSIZED) - 1u);
         return -1;
     }
     if (stream->record_length > 0u) {
@@ -516,18 +551,32 @@ int json_stream_finish(json_stream_t *stream) {
         stream->record_length = 0u;
         if (rc != 0) {
             stream->failed = true;
-            emit(stream, JSON_STREAM_EVENT_ERROR, "truncated NDJSON record", 23u);
+            stream->phase = JSON_STREAM_PHASE_ERROR;
+            emit(stream, JSON_STREAM_EVENT_ERROR, JSON_STREAM_ERROR_TRUNCATED,
+                 sizeof(JSON_STREAM_ERROR_TRUNCATED) - 1u);
             return -1;
         }
+    }
+    if (stream->phase != JSON_STREAM_PHASE_DONE) {
+        /* End of transport with no "done": true terminal: incomplete stream. */
+        stream->failed = true;
+        stream->phase = JSON_STREAM_PHASE_ERROR;
+        return -1;
     }
     return 0;
 }
 
 bool json_stream_failed(const json_stream_t *stream) {
-    return stream->failed;
+    return stream != NULL && stream->failed;
 }
 
 int json_escape_string(const char *src, size_t src_length, char *dst, size_t dst_size, size_t *out_length) {
+    if (src == NULL && src_length > 0u) {
+        if (out_length != NULL) {
+            *out_length = 0u;
+        }
+        return -1;
+    }
     size_t written = 0u;
     for (size_t i = 0; i < src_length; i++) {
         unsigned char c = (unsigned char)src[i];
@@ -579,6 +628,12 @@ int json_escape_string(const char *src, size_t src_length, char *dst, size_t dst
 }
 
 int json_unescape_string(const char *src, size_t src_length, char *dst, size_t dst_size, size_t *out_length) {
+    if (src == NULL && src_length > 0u) {
+        if (out_length != NULL) {
+            *out_length = 0u;
+        }
+        return -1;
+    }
     size_t i = 0u;
     size_t written = 0u;
     while (i < src_length) {

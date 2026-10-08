@@ -18,10 +18,25 @@
  *   JSON_STREAM_EVENT_ERROR   - a record carried an "error", or the record was
  *                               malformed/oversized and the stream gave up
  *
+ * Terminal semantics
+ * ------------------
+ * A stream succeeds only when exactly one terminal "done": true event has been
+ * delivered.  Once a DONE event (success) or an ERROR event (failure) has been
+ * emitted the stream is latched: any further input is discarded and no further
+ * events are produced, so a duplicate or post-terminal record can never be
+ * observed.  finish() reports success only for the DONE terminal; end of input
+ * before DONE (including after an ERROR) fails with -1.
+ *
  * The event payload pointer is owned by the stream and is only valid for the
  * duration of the callback.  On a malformed or oversized record the stream is
  * latched into a failed state, an ERROR event is delivered, and every later
  * call returns -1.
+ *
+ * Decoded strings may not contain an embedded U+0000 byte: keys are compared as
+ * NUL-terminated C strings, so a NUL inside a key could otherwise make
+ * "done\u0000x" compare equal to "done".  message.content is also rejected when
+ * it decodes to an embedded NUL because request serialisation later treats it
+ * as a C string.
  */
 
 #define JSON_STREAM_RECORD_MAX 2048u
@@ -32,6 +47,12 @@ typedef enum {
     JSON_STREAM_EVENT_DONE,
     JSON_STREAM_EVENT_ERROR
 } json_stream_event_type_t;
+
+typedef enum {
+    JSON_STREAM_PHASE_OPEN = 0,
+    JSON_STREAM_PHASE_DONE,
+    JSON_STREAM_PHASE_ERROR
+} json_stream_phase_t;
 
 typedef struct {
     json_stream_event_type_t type;
@@ -50,18 +71,24 @@ typedef struct {
     size_t payload_length;
     char error_text[JSON_STREAM_ERROR_MAX];
     size_t error_length;
+    json_stream_phase_t phase;
     json_stream_callback_t callback;
     void *callback_context;
 } json_stream_t;
 
 void json_stream_init(json_stream_t *stream, json_stream_callback_t callback, void *context);
 
-/* Feed a chunk of NDJSON bytes.  Returns 0 on success (including partial
- * input), or -1 once the stream has failed. */
+/* Feed a chunk of NDJSON bytes.  Returns 0 on success (including partial input,
+ * and including a valid record that carried an "error"), or -1 once the stream
+ * has failed or already terminated with an ERROR.  data may be NULL only when
+ * length is 0.  Bytes after a terminal event are discarded without producing
+ * further events. */
 int json_stream_feed(json_stream_t *stream, const char *data, size_t length);
 
 /* Signal end of the transport.  A trailing record without a newline is parsed,
- * so a truncated record fails here with an ERROR event.  Returns 0 if clean. */
+ * so a truncated record fails here with an ERROR event.  Returns 0 only once a
+ * single DONE terminal has been observed; end of input before DONE, or after an
+ * ERROR, returns -1. */
 int json_stream_finish(json_stream_t *stream);
 
 bool json_stream_failed(const json_stream_t *stream);

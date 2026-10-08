@@ -29,6 +29,9 @@ void chat_model_init(chat_model_t *model,
                      chat_request_measure_fn measure,
                      void *measure_context,
                      size_t max_request_bytes) {
+    if (model == NULL) {
+        return;
+    }
     memset(model, 0, sizeof(*model));
     model->measure = measure;
     model->measure_context = measure_context;
@@ -37,6 +40,9 @@ void chat_model_init(chat_model_t *model,
 }
 
 void chat_model_reset(chat_model_t *model) {
+    if (model == NULL) {
+        return;
+    }
     model->message_count = 0u;
     model->in_flight_index = 0u;
     model->state = CHAT_STATE_IDLE;
@@ -45,16 +51,27 @@ void chat_model_reset(chat_model_t *model) {
 }
 
 int chat_model_composer_append(chat_model_t *model, const char *text, size_t length) {
+    if (model == NULL) {
+        return -1;
+    }
+    if (text == NULL && length > 0u) {
+        return -1;
+    }
     if (length > CHAT_COMPOSER_MAX - model->composer_length) {
         return -1;
     }
-    memcpy(model->composer + model->composer_length, text, length);
+    if (length > 0u) {
+        memcpy(model->composer + model->composer_length, text, length);
+    }
     model->composer_length += length;
     model->composer[model->composer_length] = '\0';
     return 0;
 }
 
 int chat_model_composer_backspace(chat_model_t *model) {
+    if (model == NULL) {
+        return -1;
+    }
     if (model->composer_length == 0u) {
         return -1;
     }
@@ -64,19 +81,25 @@ int chat_model_composer_backspace(chat_model_t *model) {
 }
 
 void chat_model_composer_clear(chat_model_t *model) {
+    if (model == NULL) {
+        return;
+    }
     model->composer_length = 0u;
     model->composer[0] = '\0';
 }
 
 const char *chat_model_composer_text(const chat_model_t *model) {
-    return model->composer;
+    return model != NULL ? model->composer : NULL;
 }
 
 size_t chat_model_composer_length(const chat_model_t *model) {
-    return model->composer_length;
+    return model != NULL ? model->composer_length : 0u;
 }
 
 int chat_model_submit(chat_model_t *model) {
+    if (model == NULL) {
+        return -1;
+    }
     if (model->state != CHAT_STATE_IDLE) {
         return -1; /* concurrent submission while a response is streaming */
     }
@@ -126,6 +149,12 @@ int chat_model_submit(chat_model_t *model) {
 }
 
 int chat_model_append_response(chat_model_t *model, const char *text, size_t length) {
+    if (model == NULL) {
+        return -1;
+    }
+    if (text == NULL && length > 0u) {
+        return -1;
+    }
     if (model->state != CHAT_STATE_STREAMING) {
         return -1;
     }
@@ -133,14 +162,16 @@ int chat_model_append_response(chat_model_t *model, const char *text, size_t len
     if (length > CHAT_MESSAGE_MAX - message->length) {
         return -1; /* oversized response */
     }
-    memcpy(message->text + message->length, text, length);
+    if (length > 0u) {
+        memcpy(message->text + message->length, text, length);
+    }
     message->length += length;
     message->text[message->length] = '\0';
     return 0;
 }
 
 void chat_model_complete_response(chat_model_t *model) {
-    if (model->state != CHAT_STATE_STREAMING) {
+    if (model == NULL || model->state != CHAT_STATE_STREAMING) {
         return;
     }
     model->messages[model->in_flight_index].partial = false;
@@ -148,24 +179,30 @@ void chat_model_complete_response(chat_model_t *model) {
 }
 
 void chat_model_fail_response(chat_model_t *model) {
+    if (model == NULL) {
+        return;
+    }
     mark_partial(model);
 }
 
 void chat_model_cancel_response(chat_model_t *model) {
+    if (model == NULL) {
+        return;
+    }
     mark_partial(model);
 }
 
 size_t chat_model_message_count(const chat_model_t *model) {
-    return model->message_count;
+    return model != NULL ? model->message_count : 0u;
 }
 
 const chat_message_t *chat_model_message_at(const chat_model_t *model, size_t index) {
-    if (index >= model->message_count) {
+    if (model == NULL || index >= model->message_count) {
         return NULL;
     }
     return &model->messages[index];
 }
 
 bool chat_model_is_streaming(const chat_model_t *model) {
-    return model->state == CHAT_STATE_STREAMING;
+    return model != NULL && model->state == CHAT_STATE_STREAMING;
 }

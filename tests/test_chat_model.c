@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "ai/chat_model.h"
+#include "ai/ollama_provider.h"
 #include "test_util.h"
 
 /* Deterministic stand-in for a provider request measurement. */
@@ -179,6 +180,102 @@ static void check_reject_oversized_submission(void) {
     CHECK_STR_EQ(chat_model_composer_text(&model), "x");
 }
 
+static void check_null_preconditions(void) {
+    chat_model_t model;
+    chat_model_init(&model, NULL, NULL, 0u);
+
+    /* A NULL model is tolerated everywhere. */
+    chat_model_init(NULL, NULL, NULL, 0u);
+    chat_model_reset(NULL);
+    chat_model_composer_clear(NULL);
+    chat_model_complete_response(NULL);
+    chat_model_fail_response(NULL);
+    chat_model_cancel_response(NULL);
+    CHECK(chat_model_composer_text(NULL) == NULL);
+    CHECK(chat_model_composer_length(NULL) == 0u);
+    CHECK(chat_model_message_count(NULL) == 0u);
+    CHECK(chat_model_message_at(NULL, 0u) == NULL);
+    CHECK(chat_model_is_streaming(NULL) == false);
+
+    CHECK(chat_model_composer_append(NULL, "x", 1u) == -1);
+    CHECK(chat_model_composer_append(&model, NULL, 1u) == -1);
+    CHECK(chat_model_composer_append(&model, NULL, 0u) == 0);
+    CHECK(chat_model_composer_backspace(NULL) == -1);
+    CHECK(chat_model_submit(NULL) == -1);
+    CHECK(chat_model_append_response(NULL, "x", 1u) == -1);
+    CHECK(chat_model_append_response(&model, NULL, 1u) == -1);
+}
+
+/*
+ * Real provider measurement: every candidate transcript is serialised through
+ * ollama_provider_build_request so escaping expansion (each '"' becomes \" ) is
+ * accounted for exactly as in firmware.  Both the provider and the converted
+ * message array are static: they are large and must never be stack locals.
+ */
+static size_t provider_measure(void *context,
+                               const chat_message_t *messages,
+                               size_t count,
+                               const char *pending,
+                               size_t pending_length) {
+    (void)context;
+    static ollama_provider_t provider;
+    static ollama_message_t converted[CHAT_MAX_MESSAGES + 1u];
+
+    size_t n = 0u;
+    for (size_t i = 0; i < count; i++) {
+        converted[n].role = messages[i].role == CHAT_ROLE_USER ? "user" : "assistant";
+        converted[n].content = messages[i].text;
+        n++;
+    }
+    if (pending != NULL && pending_length > 0u) {
+        converted[n].role = "user";
+        converted[n].content = pending;
+        n++;
+    }
+    if (n > OLLAMA_MAX_MESSAGES) {
+        return (size_t)-1; /* cannot be serialised at all */
+    }
+    if (ollama_provider_build_request(&provider, "m", converted, n, 8) != 0) {
+        return (size_t)-1; /* request does not fit the fixed buffer */
+    }
+    return ollama_provider_request_length(&provider);
+}
+
+static void check_provider_integration_eviction(void) {
+    chat_model_t model;
+    chat_model_init(&model, provider_measure, NULL, OLLAMA_REQUEST_MAX);
+    CHECK(chat_model_message_count(&model) == 0u);
+
+    /* Each turn is 199 quotes plus a distinct leading letter; escaping doubles
+     * the quotes, so only a couple of turns fit inside OLLAMA_REQUEST_MAX. */
+    for (int turn = 0; turn < 5; turn++) {
+        char text[200];
+        memset(text, '"', sizeof(text));
+        text[0] = (char)('a' + turn);
+        CHECK(chat_model_composer_append(&model, text, sizeof(text)) == 0);
+        CHECK(chat_model_submit(&model) == 0);
+        CHECK(chat_model_append_response(&model, text, sizeof(text)) == 0);
+        chat_model_complete_response(&model);
+
+        CHECK(chat_model_message_count(&model) <= CHAT_MAX_MESSAGES);
+        /* The retained transcript must still serialise inside the bound. */
+        CHECK(provider_measure(NULL, model.messages, model.message_count, NULL, 0u) <= OLLAMA_REQUEST_MAX);
+
+        /* The third turn already forces size-based eviction down to two turns
+         * (four messages); the eight-message capacity cap has not yet applied. */
+        if (turn >= 2) {
+            CHECK(chat_model_message_count(&model) == 4u);
+        }
+    }
+
+    /* Five turns cannot fit; the oldest turns were evicted, leaving the two
+     * most recent (turns 3 and 4, whose leading letters are 'd' and 'e'). */
+    CHECK(chat_model_message_count(&model) == 4u);
+    CHECK(chat_model_message_at(&model, 0)->role == CHAT_ROLE_USER);
+    CHECK(chat_model_message_at(&model, 0)->text[0] == 'd');
+    CHECK(chat_model_message_at(&model, 2)->text[0] == 'e');
+}
+
 void test_chat_model(void) {
     check_basic();
     check_composer_limits();
@@ -187,4 +284,6 @@ void test_chat_model(void) {
     check_capacity_eviction();
     check_bound_eviction();
     check_reject_oversized_submission();
+    check_null_preconditions();
+    check_provider_integration_eviction();
 }
