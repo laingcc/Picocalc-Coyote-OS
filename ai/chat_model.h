@@ -17,12 +17,28 @@
  * A submission is rejected when the composer is empty, when the turn cannot fit
  * the request bound, or when a response is already streaming.  A response that
  * is abandoned with fail/cancel is retained and flagged partial.
+ *
+ * Storage
+ * -------
+ * chat_model_t is large: it embeds every message and the composer.  Firmware
+ * must declare it as a static or global object, never as a stack local, so the
+ * linker can account for it.  sizeof(chat_model_t) is bounded by
+ * CHAT_MODEL_STORAGE_MAX_BYTES on both the 64-bit host tests and the 32-bit
+ * RP2350 target.
+ *
+ * All entry points tolerate a NULL model (returning -1, 0, NULL or false as
+ * appropriate) and the append/submit entry points reject a length that exceeds
+ * the remaining capacity or a NULL buffer with a non-zero length.
  */
 
 #define CHAT_MAX_MESSAGES 8u
 #define CHAT_MAX_TURNS 4u
 #define CHAT_MESSAGE_MAX 4095u
 #define CHAT_COMPOSER_MAX 511u
+
+/* Worst-case static storage for one chat_model_t.  Generous enough for the
+ * 64-bit host build while still proving the firmware budget on the target. */
+#define CHAT_MODEL_STORAGE_MAX_BYTES 36864u
 
 typedef enum {
     CHAT_ROLE_USER = 0,
@@ -63,6 +79,11 @@ typedef struct {
     chat_request_measure_fn measure;
     void *measure_context;
 } chat_model_t;
+
+_Static_assert(sizeof(chat_model_t) <= CHAT_MODEL_STORAGE_MAX_BYTES,
+               "chat_model_t exceeds its static RAM budget");
+_Static_assert(CHAT_MAX_MESSAGES == CHAT_MAX_TURNS * 2u,
+               "CHAT_MAX_MESSAGES must fit whole user/assistant turns");
 
 void chat_model_init(chat_model_t *model,
                      chat_request_measure_fn measure,

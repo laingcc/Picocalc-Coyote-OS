@@ -188,9 +188,105 @@ static void check_feed(void) {
     CHECK(ollama_provider_feed(&provider, error, strlen(error)) == -1);
 }
 
+static void check_terminal_semantics(void) {
+    ollama_provider_t provider;
+    event_log_t log;
+    ollama_message_t one[1] = {{"user", "hi"}};
+
+    const char *content = "{\"message\":{\"content\":\"hi\"},\"done\":false}\n";
+    const char *done = "{\"message\":{\"content\":\"\"},\"done\":true}\n";
+
+    /* content + EOF: the stream did not reach a done terminal. */
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_feed(&provider, content, strlen(content)) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == PROVIDER_EVENT_CONTENT);
+    CHECK(ollama_provider_finish(&provider) == -1);
+    CHECK(ollama_provider_is_done(&provider) == false);
+
+    /* DONE + CONTENT in one feed: the later record is ignored and the stream
+     * completes. */
+    char combined[512];
+    size_t done_len = strlen(done);
+    size_t content_len = strlen(content);
+    memcpy(combined, done, done_len);
+    memcpy(combined + done_len, content, content_len);
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_feed(&provider, combined, done_len + content_len) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == PROVIDER_EVENT_DONE);
+    CHECK(ollama_provider_is_done(&provider));
+    CHECK(ollama_provider_feed(&provider, content, content_len) == -1); /* latched */
+    CHECK(log.count == 1);
+    CHECK(ollama_provider_finish(&provider) == 0);
+
+    /* ERROR + CONTENT in one feed: the later record is ignored and finish
+     * fails. */
+    const char *error = "{\"error\":\"boom\"}\n";
+    memcpy(combined, error, strlen(error));
+    memcpy(combined + strlen(error), content, content_len);
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_feed(&provider, combined, strlen(error) + content_len) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == PROVIDER_EVENT_ERROR);
+    CHECK_STR_EQ(log.data[0], "boom");
+    CHECK(ollama_provider_failed(&provider));
+    CHECK(ollama_provider_finish(&provider) == -1);
+
+    /* Duplicate terminal records yield exactly one DONE event. */
+    memcpy(combined, done, done_len);
+    memcpy(combined + done_len, done, done_len);
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_feed(&provider, combined, done_len * 2u) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == PROVIDER_EVENT_DONE);
+    CHECK(ollama_provider_finish(&provider) == 0);
+}
+
+static void check_null_preconditions(void) {
+    ollama_provider_t provider;
+    event_log_t log;
+    char buffer[8];
+    ollama_message_t one[1] = {{"user", "hi"}};
+
+    /* A NULL provider is tolerated. */
+    ollama_provider_init(NULL, collect, &log);
+    CHECK(ollama_provider_feed(NULL, "x", 1u) == -1);
+    CHECK(ollama_provider_finish(NULL) == -1);
+    CHECK(ollama_provider_is_done(NULL) == false);
+    CHECK(ollama_provider_failed(NULL) == false);
+
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+
+    /* message_count > 0 with a NULL array is rejected. */
+    CHECK(ollama_provider_build_request(&provider, "m", NULL, 1, 8) == -1);
+    /* message_count == 0 with a NULL array is allowed. */
+    CHECK(ollama_provider_build_request(&provider, "m", NULL, 0, 8) == 0);
+
+    /* Reading with a non-zero capacity and a NULL destination is rejected. */
+    CHECK(ollama_provider_read(&provider, 0u, NULL, 4u) == 0u);
+    CHECK(ollama_provider_read(NULL, 0u, buffer, 4u) == 0u);
+
+    /* Feeding a NULL buffer with a non-zero length is rejected. */
+    CHECK(ollama_provider_feed(&provider, NULL, 1u) == -1);
+    CHECK(ollama_provider_feed(&provider, NULL, 0u) == 0);
+}
+
 void test_ollama_provider(void) {
     check_single_message_request();
     check_escaping_and_messages();
     check_rejections();
     check_feed();
+    check_terminal_semantics();
+    check_null_preconditions();
 }

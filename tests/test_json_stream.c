@@ -25,18 +25,26 @@ static void collect(void *context, const json_stream_event_t *event) {
     log->count++;
 }
 
+/* Feed the whole input in fixed-size chunks; returns -1 if any feed fails. */
+static int feed_all(json_stream_t *stream, const char *input, size_t length, size_t chunk) {
+    size_t offset = 0;
+    while (offset < length) {
+        size_t take = length - offset < chunk ? length - offset : chunk;
+        if (json_stream_feed(stream, input + offset, take) != 0) {
+            return -1;
+        }
+        offset += take;
+    }
+    return 0;
+}
+
 /* Feed the whole input in fixed-size chunks, then finish. */
 static int run(const char *input, size_t length, size_t chunk, event_log_t *log) {
     memset(log, 0, sizeof(*log));
     json_stream_t stream;
     json_stream_init(&stream, collect, log);
-    size_t offset = 0;
-    while (offset < length) {
-        size_t take = length - offset < chunk ? length - offset : chunk;
-        if (json_stream_feed(&stream, input + offset, take) != 0) {
-            return -1;
-        }
-        offset += take;
+    if (feed_all(&stream, input, length, chunk) != 0) {
+        return -1;
     }
     return json_stream_finish(&stream);
 }
@@ -46,11 +54,17 @@ static void check_hello_at_every_split(void) {
     size_t length = strlen(input);
     for (size_t chunk = 1; chunk <= length; chunk++) {
         event_log_t log;
-        CHECK(run(input, length, chunk, &log) == 0);
+        memset(&log, 0, sizeof(log));
+        json_stream_t stream;
+        json_stream_init(&stream, collect, &log);
+        CHECK(feed_all(&stream, input, length, chunk) == 0);
         CHECK(log.count == 1);
         CHECK(log.type[0] == JSON_STREAM_EVENT_CONTENT);
         CHECK(log.length[0] == 5);
         CHECK_STR_EQ(log.data[0], "Hello");
+        /* End of transport without "done": true is not a success. */
+        CHECK(json_stream_finish(&stream) == -1);
+        CHECK(log.count == 1);
     }
 }
 
@@ -121,13 +135,18 @@ static void check_records(void) {
         CHECK(log.length[0] == 0);
     }
 
+    /* An error record is delivered, but the stream is terminally failed. */
     const char *error_record = "{\"error\":\"model not found\"}\n";
     size_t error_length = strlen(error_record);
     for (size_t chunk = 1; chunk <= error_length; chunk++) {
-        CHECK(run(error_record, error_length, chunk, &log) == 0);
+        json_stream_t stream;
+        memset(&log, 0, sizeof(log));
+        json_stream_init(&stream, collect, &log);
+        CHECK(feed_all(&stream, error_record, error_length, chunk) == 0);
         CHECK(log.count == 1);
         CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
         CHECK_STR_EQ(log.data[0], "model not found");
+        CHECK(json_stream_finish(&stream) == -1);
     }
 
     /* Two records in one stream: content then done. */
@@ -144,13 +163,19 @@ static void check_records(void) {
 
     /* Escapes and a surrogate pair inside message.content. */
     const char *escaped = "{\"message\":{\"content\":\"a\\nb\\\"c\"},\"done\":false}\n";
-    CHECK(run(escaped, strlen(escaped), 1, &log) == 0);
+    json_stream_t stream;
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(feed_all(&stream, escaped, strlen(escaped), 1) == 0);
     CHECK(log.count == 1);
     CHECK(log.type[0] == JSON_STREAM_EVENT_CONTENT);
     CHECK_STR_EQ(log.data[0], "a\nb\"c");
+    CHECK(json_stream_finish(&stream) == -1); /* no done terminal */
 
     const char *unicode = "{\"message\":{\"content\":\"\\uD83D\\uDE00\"},\"done\":false}\n";
-    CHECK(run(unicode, strlen(unicode), 1, &log) == 0);
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(feed_all(&stream, unicode, strlen(unicode), 1) == 0);
     CHECK(log.count == 1);
     CHECK(log.type[0] == JSON_STREAM_EVENT_CONTENT);
     CHECK(log.length[0] == 4);
@@ -160,7 +185,9 @@ static void check_records(void) {
     const char *noise = "{\"model\":\"m\",\"created_at\":\"2026-01-01T00:00:00Z\","
                         "\"message\":{\"role\":\"assistant\",\"content\":\"ok\",\"extra\":{\"a\":[1,2,3]}},"
                         "\"done\":false,\"eval_count\":12}\n";
-    CHECK(run(noise, strlen(noise), 5, &log) == 0);
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(feed_all(&stream, noise, strlen(noise), 5) == 0);
     CHECK(log.count == 1);
     CHECK(log.type[0] == JSON_STREAM_EVENT_CONTENT);
     CHECK_STR_EQ(log.data[0], "ok");
@@ -195,7 +222,8 @@ static void check_oversized_and_truncated(void) {
     event_log_t log;
     json_stream_t stream;
 
-    /* A record longer than JSON_STREAM_RECORD_MAX fails on the newline. */
+    /* A record longer than JSON_STREAM_RECORD_MAX fails on the newline and the
+     * full literal payload (and its exact length) is delivered. */
     char big[3000];
     memset(big, 'x', sizeof(big));
     memset(&log, 0, sizeof(log));
@@ -205,6 +233,8 @@ static void check_oversized_and_truncated(void) {
     CHECK(json_stream_failed(&stream));
     CHECK(log.count == 1);
     CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+    CHECK_STR_EQ(log.data[0], "record exceeds maximum length");
+    CHECK(log.length[0] == strlen("record exceeds maximum length"));
 
     /* A complete record with no trailing newline is still parsed. */
     memset(&log, 0, sizeof(log));
@@ -214,13 +244,146 @@ static void check_oversized_and_truncated(void) {
     CHECK(log.count == 1);
     CHECK(log.type[0] == JSON_STREAM_EVENT_DONE);
 
-    /* A truncated record fails at finish. */
+    /* A truncated record fails at finish with the full literal payload. */
     memset(&log, 0, sizeof(log));
     json_stream_init(&stream, collect, &log);
     CHECK(json_stream_feed(&stream, "{\"done\":tr", 10) == 0);
     CHECK(json_stream_finish(&stream) == -1);
     CHECK(log.count == 1);
     CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+    CHECK_STR_EQ(log.data[0], "truncated NDJSON record");
+    CHECK(log.length[0] == strlen("truncated NDJSON record"));
+
+    /* A malformed (non-JSON) record pins the malformed literal payload. */
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, "nope\n", 5) == -1);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+    CHECK_STR_EQ(log.data[0], "malformed NDJSON record");
+    CHECK(log.length[0] == strlen("malformed NDJSON record"));
+}
+
+static void check_terminal_semantics(void) {
+    event_log_t log;
+    json_stream_t stream;
+
+    const char *content = "{\"message\":{\"content\":\"hi\"},\"done\":false}\n";
+    const char *done = "{\"message\":{\"content\":\"\"},\"done\":true}\n";
+    const char *error = "{\"error\":\"boom\"}\n";
+
+    /* content + EOF: the content is delivered but the stream fails at finish. */
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(feed_all(&stream, content, strlen(content), 1) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_CONTENT);
+    CHECK(json_stream_finish(&stream) == -1);
+
+    /* DONE + CONTENT in a single feed: the later record is ignored. */
+    char combined[512];
+    size_t done_len = strlen(done);
+    size_t content_len = strlen(content);
+    memcpy(combined, done, done_len);
+    memcpy(combined + done_len, content, content_len);
+    for (size_t chunk = 1; chunk <= done_len + content_len; chunk++) {
+        memset(&log, 0, sizeof(log));
+        json_stream_init(&stream, collect, &log);
+        CHECK(feed_all(&stream, combined, done_len + content_len, chunk) == 0);
+        CHECK(log.count == 1);
+        CHECK(log.type[0] == JSON_STREAM_EVENT_DONE);
+        CHECK(json_stream_finish(&stream) == 0);
+        CHECK(log.count == 1);
+    }
+
+    /* ERROR + CONTENT in a single feed: the later record is ignored. */
+    memcpy(combined, error, strlen(error));
+    memcpy(combined + strlen(error), content, content_len);
+    size_t error_plus_content = strlen(error) + content_len;
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, combined, error_plus_content) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+    CHECK_STR_EQ(log.data[0], "boom");
+    CHECK(json_stream_finish(&stream) == -1);
+    CHECK(json_stream_feed(&stream, done, done_len) == -1); /* latched failure */
+    CHECK(log.count == 1);
+
+    /* Duplicate terminal records produce exactly one event. */
+    memcpy(combined, done, done_len);
+    memcpy(combined + done_len, done, done_len);
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(feed_all(&stream, combined, done_len * 2u, 1) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_DONE);
+    CHECK(json_stream_finish(&stream) == 0);
+    /* A second, separate terminal after DONE is ignored, not re-emitted. */
+    CHECK(json_stream_feed(&stream, content, content_len) == 0);
+    CHECK(log.count == 1);
+}
+
+static void check_embedded_nul(void) {
+    event_log_t log;
+    json_stream_t stream;
+
+    /* done\u0000x must not be accepted as the "done" key. */
+    const char *spoof_key = "{\"done\\u0000x\":true}\n";
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, spoof_key, strlen(spoof_key)) == -1);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+
+    /* The same for content and error keys. */
+    const char *spoof_content_key = "{\"message\":{\"content\\u0000x\":\"y\"},\"done\":false}\n";
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, spoof_content_key, strlen(spoof_content_key)) == -1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+
+    const char *spoof_error_key = "{\"error\\u0000x\":\"boom\"}\n";
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, spoof_error_key, strlen(spoof_error_key)) == -1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+
+    /* An embedded NUL in content is rejected because it would alias a C string. */
+    const char *nul_content = "{\"message\":{\"content\":\"a\\u0000b\"},\"done\":false}\n";
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, nul_content, strlen(nul_content)) == -1);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+
+    /* A NUL in an unknown string value is rejected too. */
+    const char *nul_value = "{\"model\":\"a\\u0000b\",\"done\":true}\n";
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+    CHECK(json_stream_feed(&stream, nul_value, strlen(nul_value)) == -1);
+    CHECK(log.type[0] == JSON_STREAM_EVENT_ERROR);
+}
+
+static void check_null_preconditions(void) {
+    event_log_t log;
+    json_stream_t stream;
+    char buffer[16];
+
+    memset(&log, 0, sizeof(log));
+    json_stream_init(&stream, collect, &log);
+
+    CHECK(json_stream_feed(NULL, "x", 1u) == -1);
+    CHECK(json_stream_feed(&stream, NULL, 1u) == -1);
+    CHECK(json_stream_feed(&stream, NULL, 0u) == 0);
+    CHECK(json_stream_finish(NULL) == -1);
+    CHECK(json_stream_failed(NULL) == false);
+
+    size_t written = 0;
+    CHECK(json_escape_string(NULL, 1u, buffer, sizeof(buffer), &written) == -1);
+    CHECK(written == 0u);
+    CHECK(json_unescape_string(NULL, 1u, buffer, sizeof(buffer), &written) == -1);
+    CHECK(written == 0u);
 }
 
 void test_json_stream(void) {
@@ -229,4 +392,7 @@ void test_json_stream(void) {
     check_records();
     check_malformed();
     check_oversized_and_truncated();
+    check_terminal_semantics();
+    check_embedded_nul();
+    check_null_preconditions();
 }

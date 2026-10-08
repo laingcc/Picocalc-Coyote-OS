@@ -83,6 +83,9 @@ static bool append_int(ollama_provider_t *provider, int value) {
 }
 
 void ollama_provider_init(ollama_provider_t *provider, provider_event_callback_t callback, void *context) {
+    if (provider == NULL) {
+        return;
+    }
     memset(provider, 0, sizeof(*provider));
     provider->callback = callback;
     provider->callback_context = context;
@@ -94,6 +97,9 @@ int ollama_provider_build_request(ollama_provider_t *provider,
                                   const ollama_message_t *messages,
                                   size_t message_count,
                                   int num_predict) {
+    if (provider == NULL) {
+        return -1;
+    }
     provider->body_length = 0u;
     provider->body[0] = '\0';
     provider->built = false;
@@ -106,6 +112,9 @@ int ollama_provider_build_request(ollama_provider_t *provider,
     }
     if (message_count > OLLAMA_MAX_MESSAGES) {
         return -1;
+    }
+    if (message_count > 0u && messages == NULL) {
+        return -1; /* count without a message array */
     }
     if (num_predict < 0) {
         return -1;
@@ -159,10 +168,16 @@ int ollama_provider_build_request(ollama_provider_t *provider,
 }
 
 size_t ollama_provider_request_length(const ollama_provider_t *provider) {
-    return provider->body_length;
+    return provider != NULL ? provider->body_length : 0u;
 }
 
 size_t ollama_provider_read(const ollama_provider_t *provider, size_t offset, char *destination, size_t capacity) {
+    if (provider == NULL) {
+        return 0u;
+    }
+    if (destination == NULL && capacity > 0u) {
+        return 0u; /* nothing to read into */
+    }
     if (offset >= provider->body_length) {
         return 0u;
     }
@@ -191,25 +206,31 @@ provider_request_t ollama_provider_request(ollama_provider_t *provider) {
 }
 
 int ollama_provider_feed(ollama_provider_t *provider, const char *data, size_t length) {
-    if (!provider->built || provider->failed) {
+    if (provider == NULL) {
+        return -1;
+    }
+    if (data == NULL && length > 0u) {
+        return -1;
+    }
+    if (!provider->built || provider->failed || provider->done) {
         return -1;
     }
     return json_stream_feed(&provider->stream, data, length);
 }
 
 int ollama_provider_finish(ollama_provider_t *provider) {
-    if (!provider->built) {
+    if (provider == NULL || !provider->built) {
         return -1;
     }
     return json_stream_finish(&provider->stream);
 }
 
 bool ollama_provider_is_done(const ollama_provider_t *provider) {
-    return provider->done;
+    return provider != NULL && provider->done;
 }
 
 bool ollama_provider_failed(const ollama_provider_t *provider) {
-    return provider->failed;
+    return provider != NULL && provider->failed;
 }
 
 const char *ollama_provider_method(void) {

@@ -9,18 +9,34 @@
  *
  * The parser accepts arbitrarily fragmented input: the status line, headers,
  * chunk-size lines and body bytes may all be split across feed() calls at any
- * offset.  It understands three body framings:
+ * offset.  Only syntactically valid HTTP/1.0 and HTTP/1.1 status lines with a
+ * three-digit status in 100..599 are accepted.  It understands three body
+ * framings:
  *
  *   - Content-Length delimited
- *   - Transfer-Encoding: chunked (chunk extensions are ignored)
+ *   - Transfer-Encoding: chunked (a lone "chunked" coding; chunk extensions are
+ *     validated but otherwise ignored)
  *   - connection close delimited (completed by http_parser_finish)
+ *
+ * Transfer-Encoding and Connection are parsed as comma-delimited, case
+ * insensitive tokens, never as substrings.  Every status line, header line,
+ * chunk-size line, chunk terminator and trailer line must use exact CRLF
+ * framing.  Content-Length together with chunked, duplicate Content-Length or
+ * Transfer-Encoding headers, unsupported transfer-coding sequences and
+ * malformed trailer fields all fail.
+ *
+ * This parser is not a pipeline: a complete Content-Length or chunked message
+ * may not be followed by additional bytes, so any byte appearing after the
+ * declared body latches the parser into a failed state rather than being
+ * silently discarded.
  *
  * The head callback fires exactly once, as soon as the header block is
  * complete.  Body callbacks receive spans that point directly into the caller's
  * input buffer and are only valid for the duration of the call.
  *
- * Malformed headers, oversized headers, malformed/oversized chunk framing and
- * truncated bodies all latch the parser into a failed state and return -1.
+ * Malformed headers, oversized headers, malformed/oversized chunk framing,
+ * trailing bytes after a framed body and truncated bodies all latch the parser
+ * into a failed state and return -1.
  */
 
 #define HTTP_PARSER_HEADER_MAX 1024u
@@ -28,7 +44,7 @@
 #define HTTP_PARSER_CHUNK_MAX 65536u
 
 typedef struct {
-    int status_code;         /* 100..999, or 0 before the head is parsed */
+    int status_code;         /* 100..599, or 0 before the head is parsed */
     bool has_content_length;
     size_t content_length;
     bool chunked;
