@@ -92,14 +92,14 @@ async def chat(request: web.Request) -> web.StreamResponse:
     except UpstreamError:
         return _json_error(502, "Muse rejected or could not accept the request")
 
-    response = web.StreamResponse(
-        status=200, headers={
-            "Content-Type": "application/x-ndjson",
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-        })
     pending: asyncio.Task | None = None
     try:
+        response = web.StreamResponse(
+            status=200, headers={
+                "Content-Type": "application/x-ndjson",
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            })
         await response.prepare(request)
         iterator = turn.events().__aiter__()
         while True:
