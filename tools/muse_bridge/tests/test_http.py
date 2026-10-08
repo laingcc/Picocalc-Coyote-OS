@@ -217,3 +217,29 @@ def test_unexpected_stream_write_failure_disconnects_accepted_turn(monkeypatch):
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_response_constructor_failure_disconnects_accepted_turn(monkeypatch):
+    async def scenario():
+        broker = Broker()
+        turn = Turn([])
+        broker.result = turn
+        client = await client_for(broker)
+
+        def fail_constructor(*args, **kwargs):
+            raise RuntimeError("unexpected response construction failure")
+
+        monkeypatch.setattr(
+            "coyote_muse_bridge.http.web.StreamResponse", fail_constructor)
+        try:
+            try:
+                await client.post(
+                    "/v1/chat", json={"text": "x"},
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+            except Exception:
+                pass
+            assert turn.disconnected
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())

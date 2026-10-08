@@ -142,20 +142,33 @@ class BridgeBroker:
         if self._active is not state or state.closed:
             raise BridgeUnavailable("Muse session changed while acknowledging the turn")
 
-        if not isinstance(reply, dict) or not reply.get("ok"):
+        if not isinstance(reply, dict) or reply.get("ok") is not True:
             status = reply.get("status") if isinstance(reply, dict) else None
-            self._release(state)
-            raise UpstreamError("Muse rejected the request", status=status)
+            if isinstance(reply, dict) and reply.get("ok") is False:
+                self._release(state)
+                raise UpstreamError("Muse rejected the request", status=status)
+            self._disconnect(state)
+            self._ensure_watcher(state)
+            raise UpstreamError("Muse acknowledgement was malformed", status=status)
         result = reply.get("response")
         if isinstance(result, dict) and isinstance(result.get("result"), dict):
             result = result["result"]
-        if not isinstance(result, dict) or not isinstance(result.get("message_id"), str):
+        if not isinstance(result, dict):
+            self._disconnect(state)
+            self._ensure_watcher(state)
+            raise UpstreamError("Muse acknowledgement had no message id")
+        message_id = result.get("message_id")
+        if not isinstance(message_id, str) or not message_id or not self._valid_utf8(message_id):
             self._disconnect(state)
             self._ensure_watcher(state)
             raise UpstreamError("Muse acknowledgement had no message id")
 
-        state.note_id = result["message_id"]
+        state.note_id = message_id
         parent = result.get("reply_to_message_id")
+        if parent is not None and (not isinstance(parent, str) or not self._valid_utf8(parent)):
+            self._disconnect(state)
+            self._ensure_watcher(state)
+            raise UpstreamError("Muse acknowledgement had an invalid parent id")
         state.parent_id = parent if isinstance(parent, str) else ""
         state.acked = True
         pending = list(state.pending)

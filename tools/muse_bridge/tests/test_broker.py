@@ -327,14 +327,24 @@ def test_uncertain_ack_failures_keep_global_turn_quarantined():
         broker.session_lost()
         assert not broker.busy
 
-        await session.replies.put({"ok": True, "response": {}})
-        with pytest.raises(UpstreamError):
-            await broker.start_turn("malformed acknowledgement")
-        assert broker.busy
-        with pytest.raises(BridgeBusy):
-            await broker.start_turn("still must not overlap")
-        broker.session_lost()
-        assert not broker.busy
+        uncertain_replies = [
+            None,
+            {},
+            {"status": 502},
+            {"ok": None},
+            {"ok": True, "response": {}},
+            {"ok": True, "response": {"message_id": ""}},
+            {"ok": True, "response": {"message_id": "\ud800"}},
+        ]
+        for reply in uncertain_replies:
+            await session.replies.put(reply)
+            with pytest.raises(UpstreamError):
+                await broker.start_turn("malformed acknowledgement")
+            assert broker.busy
+            with pytest.raises(BridgeBusy):
+                await broker.start_turn("still must not overlap")
+            broker.session_lost()
+            assert not broker.busy
 
     asyncio.run(scenario())
 
