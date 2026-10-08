@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coyote-muse-bridge"
+version = "0.1.0"
+description = "Authenticated streaming HTTP bridge from Coyote OS to Muse"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "aiohttp>=3.10,<4",
+  "musegadget @ git+https://github.com/facebookincubator/muse-gadget-sdk.git@86cf33fb4092ba700b4dc33928966d1bcb31556d#subdirectory=linux",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+coyote-muse-bridge = "coyote_muse_bridge.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
