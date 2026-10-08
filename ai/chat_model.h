@@ -110,6 +110,12 @@ void chat_model_complete_response(chat_model_t *model);
 void chat_model_fail_response(chat_model_t *model);
 void chat_model_cancel_response(chat_model_t *model);
 
+/* Append one complete message to the stored transcript.  Returns 0 on success,
+ * -1 on rejection (NULL model, streaming, invalid role, NULL text with
+ * non-zero length, length > CHAT_MESSAGE_MAX, or message_count == CHAT_MAX_MESSAGES).
+ * Does not touch the composer. */
+int chat_model_append_message(chat_model_t *model, chat_role_t role, const char *text, size_t length);
+
 size_t chat_model_message_count(const chat_model_t *model);
 const chat_message_t *chat_model_message_at(const chat_model_t *model, size_t index);
 bool chat_model_is_streaming(const chat_model_t *model);
