@@ -31,6 +31,7 @@ add_executable(coyote
         ai/json_stream.c
         ai/http_parser.c
         ai/ollama_provider.c
+        ai/deepseek_provider.c
         ai/chat_model.c
         ai/chat_request.c
         ai/chat_settings.c

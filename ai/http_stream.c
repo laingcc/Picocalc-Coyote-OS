@@ -175,15 +175,31 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
     }
 
     body_length = request->body.length(request->body.context);
-    head_length = snprintf(stream->head, sizeof(stream->head),
-                           "%s %s HTTP/1.1\r\n"
-                           "Host: %s:%u\r\n"
-                           "Content-Type: %s\r\n"
-                           "Content-Length: %lu\r\n"
-                           "Connection: close\r\n"
-                           "\r\n",
-                           request->method, request->path, request->host, (unsigned)request->port,
-                           request->content_type, (unsigned long)body_length);
+    if (request->bearer_token != NULL && request->bearer_token[0] != '\0') {
+        if (!is_header_safe(request->bearer_token, true)) {
+            return -1;
+        }
+        head_length = snprintf(stream->head, sizeof(stream->head),
+                               "%s %s HTTP/1.1\r\n"
+                               "Host: %s:%u\r\n"
+                               "Authorization: Bearer %s\r\n"
+                               "Content-Type: %s\r\n"
+                               "Content-Length: %lu\r\n"
+                               "Connection: close\r\n"
+                               "\r\n",
+                               request->method, request->path, request->host, (unsigned)request->port,
+                               request->bearer_token, request->content_type, (unsigned long)body_length);
+    } else {
+        head_length = snprintf(stream->head, sizeof(stream->head),
+                               "%s %s HTTP/1.1\r\n"
+                               "Host: %s:%u\r\n"
+                               "Content-Type: %s\r\n"
+                               "Content-Length: %lu\r\n"
+                               "Connection: close\r\n"
+                               "\r\n",
+                               request->method, request->path, request->host, (unsigned)request->port,
+                               request->content_type, (unsigned long)body_length);
+    }
     if (head_length <= 0 || (size_t)head_length >= sizeof(stream->head)) {
         return -1;
     }

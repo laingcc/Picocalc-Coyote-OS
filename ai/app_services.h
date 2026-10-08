@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "ai/ai_config.h"
+#include "ai/deepseek_provider.h"
 #include "ai/http_stream.h"
 #include "ai/ollama_provider.h"
 #include "ai/provider.h"

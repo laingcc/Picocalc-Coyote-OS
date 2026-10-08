@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "ai/deepseek_provider.h"
+
 #include "pico/time.h"
 
 #ifndef COYOTE_HAS_WIFI
@@ -25,7 +27,10 @@ static struct {
     wifi_manager_t wifi;
     wifi_scan_t scan;
     http_stream_t stream;
-    ollama_provider_t provider;
+    union {
+        ollama_provider_t ollama;
+        deepseek_provider_t deepseek;
+    } provider;
     provider_event_callback_t callback;
     void *callback_context;
 } services;
@@ -422,12 +427,20 @@ static const http_stream_ops_t stream_ops = {
 
 /* ---- Provider binding --------------------------------------------------- */
 
-static int sink_feed(void *context, const char *data, size_t length) {
+static int ollama_sink_feed(void *context, const char *data, size_t length) {
     return ollama_provider_feed((ollama_provider_t *)context, data, length);
 }
 
-static int sink_finish(void *context) {
+static int ollama_sink_finish(void *context) {
     return ollama_provider_finish((ollama_provider_t *)context);
+}
+
+static int deepseek_sink_feed(void *context, const char *data, size_t length) {
+    return deepseek_provider_feed((deepseek_provider_t *)context, data, length);
+}
+
+static int deepseek_sink_finish(void *context) {
+    return deepseek_provider_finish((deepseek_provider_t *)context);
 }
 
 /* One received segment can decode into several events.  Once the chat has been
@@ -448,7 +461,7 @@ void app_services_init(void) {
     wifi_manager_init(&services.wifi, &wifi_ops, NULL);
     wifi_scan_init(&services.scan, &scan_ops, NULL);
     http_stream_init(&services.stream, &stream_ops, NULL);
-    ollama_provider_init(&services.provider, on_provider_event, NULL);
+    ollama_provider_init(&services.provider.ollama, on_provider_event, NULL);
     services.initialised = true;
 }
 
@@ -530,31 +543,60 @@ int app_services_chat_start(const ollama_message_t *messages,
     http_stream_request_t request;
 
     if (!services.initialised || http_stream_is_active(&services.stream) ||
-        !wifi_manager_is_online(&services.wifi) || strcmp(services.config.provider, "ollama") != 0) {
+        !wifi_manager_is_online(&services.wifi)) {
         return -1;
     }
 
     services.callback = callback;
     services.callback_context = context;
-    ollama_provider_init(&services.provider, on_provider_event, NULL);
-    if (ollama_provider_build_request(&services.provider, services.config.model, messages, message_count,
-                                      (int)services.config.max_predict) != 0) {
-        return -1;
-    }
 
     memset(&request, 0, sizeof(request));
     request.host = services.config.host;
     request.port = services.config.port;
-    request.method = ollama_provider_method();
-    request.path = ollama_provider_path();
-    request.content_type = ollama_provider_content_type();
-    request.body = ollama_provider_request(&services.provider);
-    request.sink.feed = sink_feed;
-    request.sink.finish = sink_finish;
-    request.sink.context = &services.provider;
     request.connect_timeout_ms = services.config.connect_timeout_ms;
     request.idle_timeout_ms = services.config.idle_timeout_ms;
     request.request_timeout_ms = services.config.request_timeout_ms;
+
+    if (strcmp(services.config.provider, "ollama") == 0) {
+        ollama_provider_init(&services.provider.ollama, on_provider_event, NULL);
+        if (ollama_provider_build_request(&services.provider.ollama, services.config.model, messages, message_count,
+                                          (int)services.config.max_predict) != 0) {
+            return -1;
+        }
+        request.method = ollama_provider_method();
+        request.path = ollama_provider_path();
+        request.content_type = ollama_provider_content_type();
+        request.bearer_token = NULL;
+        request.body = ollama_provider_request(&services.provider.ollama);
+        request.sink.feed = ollama_sink_feed;
+        request.sink.finish = ollama_sink_finish;
+        request.sink.context = &services.provider.ollama;
+    } else if (strcmp(services.config.provider, "deepseek") == 0) {
+        deepseek_message_t deepseek_converted[DEEPSEEK_MAX_MESSAGES];
+        if (message_count > DEEPSEEK_MAX_MESSAGES) {
+            return -1;
+        }
+        for (size_t i = 0; i < message_count; i++) {
+            deepseek_converted[i].role = messages[i].role;
+            deepseek_converted[i].content = messages[i].content;
+        }
+        deepseek_provider_init(&services.provider.deepseek, on_provider_event, NULL);
+        if (deepseek_provider_build_request(&services.provider.deepseek, services.config.model, deepseek_converted, message_count,
+                                            (int)services.config.max_predict) != 0) {
+            return -1;
+        }
+        request.method = deepseek_provider_method();
+        request.path = deepseek_provider_path();
+        request.content_type = deepseek_provider_content_type();
+        request.bearer_token = services.config.bearer_token;
+        request.body = deepseek_provider_request(&services.provider.deepseek);
+        request.sink.feed = deepseek_sink_feed;
+        request.sink.finish = deepseek_sink_finish;
+        request.sink.context = &services.provider.deepseek;
+    } else {
+        return -1;
+    }
+
     return http_stream_start(&services.stream, &request);
 }
 

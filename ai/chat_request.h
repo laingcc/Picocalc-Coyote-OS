@@ -5,6 +5,7 @@
 
 #include "ai/ai_config.h"
 #include "ai/chat_model.h"
+#include "ai/deepseek_provider.h"
 #include "ai/ollama_provider.h"
 
 /*
@@ -45,7 +46,10 @@ size_t chat_request_convert(const chat_message_t *messages,
  */
 typedef struct {
     const ai_config_t *config;
-    ollama_provider_t scratch;
+    union {
+        ollama_provider_t ollama;
+        deepseek_provider_t deepseek;
+    } scratch;
 } chat_request_measure_t;
 
 void chat_request_measure_init(chat_request_measure_t *measure, const ai_config_t *config);

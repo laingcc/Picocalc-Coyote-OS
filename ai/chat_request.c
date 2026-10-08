@@ -1,5 +1,7 @@
 #include "ai/chat_request.h"
 
+#include <string.h>
+
 const char *chat_request_role_name(chat_role_t role) {
     return role == CHAT_ROLE_ASSISTANT ? "assistant" : "user";
 }
@@ -42,7 +44,7 @@ void chat_request_measure_init(chat_request_measure_t *measure, const ai_config_
         return;
     }
     measure->config = config;
-    ollama_provider_init(&measure->scratch, NULL, NULL);
+    ollama_provider_init(&measure->scratch.ollama, NULL, NULL);
 }
 
 size_t chat_request_measure(void *context,
@@ -64,9 +66,24 @@ size_t chat_request_measure(void *context,
     if (count == CHAT_REQUEST_UNMEASURABLE) {
         return CHAT_REQUEST_UNMEASURABLE;
     }
-    if (ollama_provider_build_request(&measure->scratch, measure->config->model, converted, count,
-                                      (int)measure->config->max_predict) != 0) {
-        return CHAT_REQUEST_UNMEASURABLE;
+    if (strcmp(measure->config->provider, "deepseek") == 0) {
+        deepseek_message_t deepseek_converted[DEEPSEEK_MAX_MESSAGES];
+        for (size_t i = 0; i < count; i++) {
+            deepseek_converted[i].role = converted[i].role;
+            deepseek_converted[i].content = converted[i].content;
+        }
+        deepseek_provider_init(&measure->scratch.deepseek, NULL, NULL);
+        if (deepseek_provider_build_request(&measure->scratch.deepseek, measure->config->model, deepseek_converted, count,
+                                            (int)measure->config->max_predict) != 0) {
+            return CHAT_REQUEST_UNMEASURABLE;
+        }
+        return deepseek_provider_request_length(&measure->scratch.deepseek);
+    } else {
+        ollama_provider_init(&measure->scratch.ollama, NULL, NULL);
+        if (ollama_provider_build_request(&measure->scratch.ollama, measure->config->model, converted, count,
+                                          (int)measure->config->max_predict) != 0) {
+            return CHAT_REQUEST_UNMEASURABLE;
+        }
+        return ollama_provider_request_length(&measure->scratch.ollama);
     }
-    return ollama_provider_request_length(&measure->scratch);
 }
