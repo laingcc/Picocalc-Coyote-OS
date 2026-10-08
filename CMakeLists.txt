@@ -25,6 +25,7 @@ add_executable(coyote
         keyboard_definition.h
         tinyexpr/tinyexpr.c
         config.h
+        ai/ai_config.c
         ai/json_stream.c
         ai/http_parser.c
         ai/ollama_provider.c

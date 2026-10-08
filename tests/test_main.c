@@ -9,12 +9,14 @@ void test_json_stream(void);
 void test_http_parser(void);
 void test_ollama_provider(void);
 void test_chat_model(void);
+void test_ai_config(void);
 
 int main(void) {
     test_json_stream();
     test_http_parser();
     test_ollama_provider();
     test_chat_model();
+    test_ai_config();
 
     printf("%d checks, %d failures\n", g_tests_run, g_tests_failed);
     return g_tests_failed == 0 ? 0 : 1;
