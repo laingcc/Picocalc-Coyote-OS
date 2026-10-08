@@ -205,6 +205,7 @@ static void check_terminal_semantics(void) {
     CHECK(log.type[0] == PROVIDER_EVENT_CONTENT);
     CHECK(ollama_provider_finish(&provider) == -1);
     CHECK(ollama_provider_is_done(&provider) == false);
+    CHECK(ollama_provider_failed(&provider));
 
     /* DONE + CONTENT in one feed is a terminal protocol failure. */
     char combined[512];
