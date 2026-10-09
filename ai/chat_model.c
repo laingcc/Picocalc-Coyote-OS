@@ -192,6 +192,36 @@ void chat_model_cancel_response(chat_model_t *model) {
     mark_partial(model);
 }
 
+int chat_model_append_message(chat_model_t *model, chat_role_t role, const char *text, size_t length) {
+    if (model == NULL) {
+        return -1;
+    }
+    if (model->state != CHAT_STATE_IDLE) {
+        return -1;
+    }
+    if (role != CHAT_ROLE_USER && role != CHAT_ROLE_ASSISTANT) {
+        return -1;
+    }
+    if (text == NULL && length > 0u) {
+        return -1;
+    }
+    if (length > CHAT_MESSAGE_MAX) {
+        return -1;
+    }
+    if (model->message_count >= CHAT_MAX_MESSAGES) {
+        return -1;
+    }
+    chat_message_t *msg = &model->messages[model->message_count++];
+    msg->role = role;
+    if (length > 0u && text != NULL) {
+        memcpy(msg->text, text, length);
+    }
+    msg->text[length] = '\0';
+    msg->length = length;
+    msg->partial = false;
+    return 0;
+}
+
 size_t chat_model_message_count(const chat_model_t *model) {
     return model != NULL ? model->message_count : 0u;
 }

@@ -22,6 +22,8 @@ set(COYOTE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/ai/ai_config.c"
     "${COYOTE_ROOT}/ai/config_store.c"
+    "${COYOTE_ROOT}/ai/conv_store.c"
+    "${COYOTE_ROOT}/ai/file_store.c"
     "${COYOTE_ROOT}/ai/json_stream.c"
     "${COYOTE_ROOT}/ai/http_parser.c"
     "${COYOTE_ROOT}/ai/ollama_provider.c"
@@ -35,8 +37,8 @@ add_library(coyote_ai STATIC
 )
 # The store's rename goes through a test double so the tests can fail it and
 # imitate FAT, which will not rename over an existing file.
-set_source_files_properties("${COYOTE_ROOT}/ai/config_store.c" PROPERTIES
-    COMPILE_DEFINITIONS "rename=config_store_test_rename")
+set_source_files_properties("${COYOTE_ROOT}/ai/file_store.c" PROPERTIES
+    COMPILE_DEFINITIONS "rename=file_store_test_rename")
 target_include_directories(coyote_ai PUBLIC "${COYOTE_ROOT}")
 target_compile_options(coyote_ai PRIVATE -Wall -Wextra -Werror)
 
@@ -53,6 +55,7 @@ add_executable(coyote_ai_tests
     test_chat_layout.c
     test_ai_config.c
     test_config_store.c
+    test_conv_store.c
     test_http_stream.c
     test_wifi_scan.c
 )

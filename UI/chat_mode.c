@@ -11,6 +11,7 @@
 #include "ai/chat_request.h"
 #include "ai/chat_settings.h"
 #include "ai/config_store.h"
+#include "ai/conv_store.h"
 
 #define COLS (LCD_WIDTH / 8)
 #define ROW_H 12
@@ -35,6 +36,9 @@ static char note[NOTE_MAX + 1];
 static char status_drawn[COLS + 1];
 static char setting_labels[CHAT_SETTING_COUNT + 1][32];
 static char scan_labels[WIFI_SCAN_MAX_NETWORKS][32];
+static char conv_titles[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 1u];
+static char conv_labels[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 3u];
+static const char *conv_label_ptrs[CONV_STORE_MAX_CONVERSATIONS];
 static size_t scroll;       /* rows scrolled back from the newest line */
 static uint32_t transcript_drawn_ms;
 static bool transcript_dirty, composer_dirty;
@@ -387,20 +391,147 @@ static void provider_menu(void) {
     if (chat_settings_set(&config, CHAT_SETTING_PROVIDER, "ollama") == AI_CONFIG_OK) apply_config();
 }
 
+static void make_auto_title(const char *src, size_t src_len, char *dst, size_t dst_cap) {
+    size_t out = 0u;
+    bool in_space = false;
+    size_t i = 0u;
+
+    while (i < src_len && ((unsigned char)src[i] <= ' ' || src[i] == '\t' || src[i] == '\n' || src[i] == '\r')) {
+        i++;
+    }
+    for (; i < src_len && out + 1u < dst_cap; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c <= ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (!in_space && out > 0u && out + 1u < dst_cap) {
+                dst[out++] = ' ';
+                in_space = true;
+            }
+        } else {
+            dst[out++] = (char)c;
+            in_space = false;
+        }
+    }
+    while (out > 0u && dst[out - 1u] == ' ') {
+        out--;
+    }
+    dst[out] = '\0';
+    if (out == 0u) {
+        snprintf(dst, dst_cap, "chat");
+    }
+}
+
+static void save_chat_action(void) {
+    if (chat_model_is_streaming(&chat)) {
+        set_note("busy: Esc cancels");
+        return;
+    }
+    size_t count = chat_model_message_count(&chat);
+    if (count == 0u) {
+        set_note("nothing to save");
+        return;
+    }
+    const chat_message_t *first_user = NULL;
+    for (size_t i = 0u; i < count; i++) {
+        const chat_message_t *m = chat_model_message_at(&chat, i);
+        if (m != NULL && m->role == CHAT_ROLE_USER) {
+            first_user = m;
+            break;
+        }
+    }
+    char auto_title[CONV_STORE_TITLE_MAX + 1u];
+    if (first_user != NULL && first_user->length > 0u) {
+        make_auto_title(first_user->text, first_user->length, auto_title, sizeof(auto_title));
+    } else {
+        snprintf(auto_title, sizeof(auto_title), "chat");
+    }
+    conv_store_status_t st = conv_store_save(&chat, auto_title, CONFIG_DIR);
+    if (st == CONV_STORE_OK) {
+        set_note("saved");
+    } else {
+        set_note("save failed");
+    }
+}
+
+static void open_chat_action(void) {
+    size_t count = 0u;
+    conv_store_status_t st = conv_store_list(CONFIG_DIR, conv_titles, &count, CONV_STORE_MAX_CONVERSATIONS);
+    if (st != CONV_STORE_OK || count == 0u) {
+        set_note("no saved chats");
+        return;
+    }
+    for (size_t i = 0u; i < count; i++) {
+        snprintf(conv_labels[i], sizeof(conv_labels[i]), " %s ", conv_titles[i]);
+        conv_label_ptrs[i] = conv_labels[i];
+    }
+    int sel = menu(" SAVED CHATS ", conv_label_ptrs, (int)count, 0);
+    if (sel < 0 || (size_t)sel >= count) {
+        return;
+    }
+    cancel_reply();
+    if (conv_store_load(&chat, conv_titles[sel], CONFIG_DIR) == CONV_STORE_OK) {
+        scroll = 0u;
+        note[0] = '\0';
+        transcript_dirty = composer_dirty = true;
+    } else {
+        set_note("load failed");
+    }
+}
+
+static void delete_chat_action(void) {
+    size_t count = 0u;
+    conv_store_status_t st = conv_store_list(CONFIG_DIR, conv_titles, &count, CONV_STORE_MAX_CONVERSATIONS);
+    if (st != CONV_STORE_OK || count == 0u) {
+        set_note("no saved chats");
+        return;
+    }
+    for (size_t i = 0u; i < count; i++) {
+        snprintf(conv_labels[i], sizeof(conv_labels[i]), " %s ", conv_titles[i]);
+        conv_label_ptrs[i] = conv_labels[i];
+    }
+    int sel = menu(" DELETE CHAT ", conv_label_ptrs, (int)count, 0);
+    if (sel < 0 || (size_t)sel >= count) {
+        return;
+    }
+    if (conv_store_delete(conv_titles[sel], CONFIG_DIR) == CONV_STORE_OK) {
+        set_note("deleted");
+    } else {
+        set_note("delete failed");
+    }
+}
+
+static bool conversations_menu(void) {
+    static const char *const choices[] = {" Save chat ", " Open saved ", " Delete saved "};
+    int sel = menu(" CONVERSATIONS ", choices, 3, 0);
+    if (sel < 0) {
+        return false;
+    }
+    if (sel == 0) {
+        save_chat_action();
+    } else if (sel == 1) {
+        open_chat_action();
+    } else if (sel == 2) {
+        delete_chat_action();
+    }
+    return true;
+}
+
 static void chat_menu(void) {
-    const char *labels[4];
+    const char *labels[5];
     int sel = 0;
 
     while (1) {
         setting_label(&config, CHAT_SETTING_MODEL, setting_labels[0], sizeof(setting_labels[0]));
         setting_label(&config, CHAT_SETTING_PROVIDER, setting_labels[1], sizeof(setting_labels[1]));
         labels[0] = setting_labels[0]; labels[1] = setting_labels[1];
-        labels[2] = " Connection settings "; labels[3] = " New chat ";
-        sel = menu(" CHAT ", labels, 4, sel);
+        labels[2] = " Connection settings ";
+        labels[3] = " Conversations ";
+        labels[4] = " New chat ";
+        sel = menu(" CHAT ", labels, 5, sel);
         if (sel == 0) { if (edit_setting(&config, CHAT_SETTING_MODEL)) apply_config(); }
         else if (sel == 1) provider_menu();
         else if (sel == 2) settings_menu();
-        else if (sel == 3) { cancel_reply(); chat_model_reset(&chat); note[0] = '\0'; scroll = 0; break; }
+        else if (sel == 3) { if (conversations_menu()) break; }
+        else if (sel == 4) { cancel_reply(); chat_model_reset(&chat); note[0] = '\0'; scroll = 0; break; }
         else break;
     }
     chat_mode_redraw();
