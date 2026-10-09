@@ -29,6 +29,9 @@
 #define CONV_STORE_TITLE_MAX 63u
 #define CONV_STORE_PATH_CAPACITY FILE_STORE_PATH_CAPACITY
 
+/* Longest export file name stem built from a title, before ".txt". */
+#define CONV_STORE_EXPORT_NAME_MAX 32u
+
 typedef enum {
     CONV_STORE_OK = 0,
     CONV_STORE_IO_ERROR = 1,
@@ -75,5 +78,35 @@ conv_store_status_t conv_store_load(chat_model_t *model,
  */
 conv_store_status_t conv_store_delete(const char *title,
                                       const char *dir);
+
+/*
+ * Build the export path <dir>/<name>.txt for a conversation title.
+ * The name keeps the title's ASCII letters, digits and '-'; every other run of
+ * characters becomes a single '_', and the stem is cut to
+ * CONV_STORE_EXPORT_NAME_MAX. A title with nothing left exports as "chat",
+ * and a name that would land on convs.txt gets a trailing '_'.
+ */
+conv_store_status_t conv_store_export_path(const char *title,
+                                           const char *dir,
+                                           char *path,
+                                           size_t capacity);
+
+/*
+ * Write model's transcript to path as plain text for reading off the device:
+ *   # <title>
+ *   <blank line>
+ *   user: <text>
+ *   assistant: <text>
+ * Message text is written as stored (no convs.txt escaping) minus control
+ * characters other than newline and tab; a reply that was cut short is
+ * labelled "assistant (incomplete)". An existing file is replaced through
+ * <path>.tmp, so path must leave room for that suffix.
+ * *written (optional) receives the size of the file, 0 on failure.
+ * Rejects an empty transcript like conv_store_save.
+ */
+conv_store_status_t conv_store_export(const chat_model_t *model,
+                                      const char *title,
+                                      const char *path,
+                                      size_t *written);
 
 #endif
