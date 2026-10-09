@@ -11,6 +11,7 @@
 #include "ai/chat_request.h"
 #include "ai/chat_settings.h"
 #include "ai/config_store.h"
+#include "ai/time_service.h"
 
 #define COLS (LCD_WIDTH / 8)
 #define ROW_H 12
@@ -64,10 +65,19 @@ static const char *wifi_label(void) {
 
 static void draw_status(bool force) {
     char line[COLS + 1];
+    char clock[TIME_SYNC_LABEL_CAPACITY];
+    size_t len, clock_len;
     /* A note (usually an error) takes the model's place so it is not cut short. */
     if (note[0]) snprintf(line, sizeof(line), "%-8s %s", wifi_label(), note);
-    else snprintf(line, sizeof(line), "%-8s %.16s  %s", wifi_label(), config.model[0] ? config.model : "(no model)",
-                  chat_model_is_streaming(&chat) ? "streaming..." : "F5:menu");
+    else snprintf(line, sizeof(line), "%-8s %.13s %s", wifi_label(), config.model[0] ? config.model : "(no model)",
+                  chat_model_is_streaming(&chat) ? "streaming" : "F5:menu");
+    /* The clock (UTC) sits at the right edge unless a long note needs the room. */
+    time_service_label(clock, sizeof(clock));
+    len = strlen(line); clock_len = strlen(clock);
+    if (len + 1 + clock_len <= COLS) {
+        memset(line + len, ' ', COLS - len);
+        memcpy(line + COLS - clock_len, clock, clock_len + 1);
+    }
     if (!force && strcmp(line, status_drawn) == 0) return;
     strcpy(status_drawn, line);
     draw_cells(STATUS_ROW, 0, line, strlen(line), COLS, WHITE, GRAY);
