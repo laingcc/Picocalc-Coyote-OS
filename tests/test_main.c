@@ -1,9 +1,45 @@
+#include <errno.h>
 #include <stdio.h>
 
 #include "test_util.h"
 
 int g_tests_run = 0;
 int g_tests_failed = 0;
+
+int rename_calls;
+int rename_fail_call;
+int rename_fail_all;
+int rename_like_fat;
+
+int exists(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        return 0;
+    }
+    fclose(file);
+    return 1;
+}
+
+int file_store_test_rename(const char *old_path, const char *new_path);
+int file_store_test_rename(const char *old_path, const char *new_path) {
+    rename_calls++;
+    if (rename_fail_all || rename_calls == rename_fail_call) {
+        errno = EIO;
+        return -1;
+    }
+    if (rename_like_fat && exists(new_path)) {
+        errno = EEXIST;
+        return -1;
+    }
+    return rename(old_path, new_path);
+}
+
+void reset_rename(void) {
+    rename_calls = 0;
+    rename_fail_call = 0;
+    rename_fail_all = 0;
+    rename_like_fat = 0;
+}
 
 void test_json_stream(void);
 void test_http_parser(void);

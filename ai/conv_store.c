@@ -15,61 +15,10 @@ typedef struct {
 } file_reader_t;
 
 static char file_path[CONV_STORE_PATH_CAPACITY];
-static char temp_path[CONV_STORE_PATH_CAPACITY];
-static char backup_path[CONV_STORE_PATH_CAPACITY];
 
 static char line_buf[LINE_CAPACITY];
 static char msg_buf[CHAT_MESSAGE_MAX + 1u];
 static char clean_title_buf[CONV_STORE_TITLE_MAX + 1u];
-
-static int build_path(char *path, const char *dir, const char *name) {
-    size_t dir_length = strlen(dir);
-    size_t name_length = strlen(name);
-
-    if (dir_length == 0u || dir_length + 1u + name_length >= CONV_STORE_PATH_CAPACITY) {
-        return -1;
-    }
-    memcpy(path, dir, dir_length);
-    path[dir_length] = '/';
-    memcpy(path + dir_length + 1u, name, name_length + 1u);
-    return 0;
-}
-
-static int build_paths(const char *dir) {
-    if (dir == NULL || build_path(file_path, dir, CONV_STORE_FILE_NAME) != 0 ||
-        build_path(temp_path, dir, CONV_STORE_TEMP_NAME) != 0 ||
-        build_path(backup_path, dir, CONV_STORE_BACKUP_NAME) != 0) {
-        return -1;
-    }
-    return 0;
-}
-
-static int replace_file(void) {
-    if (rename(temp_path, file_path) == 0) {
-        /* A stale backup from an earlier interrupted swap is no longer needed. */
-        remove(backup_path);
-        return 0;
-    }
-    /* FAT refuses to rename over an existing file: step the old one aside. */
-    remove(backup_path);
-    if (rename(file_path, backup_path) != 0) {
-        return -1;
-    }
-    if (rename(temp_path, file_path) != 0) {
-        rename(backup_path, file_path);
-        return -1;
-    }
-    remove(backup_path);
-    return 0;
-}
-
-static FILE *open_existing(void) {
-    FILE *f = fopen(file_path, "rb");
-    if (f == NULL) {
-        f = fopen(backup_path, "rb");
-    }
-    return f;
-}
 
 static void reader_init(file_reader_t *r, FILE *f) {
     r->file = f;
@@ -435,11 +384,11 @@ conv_store_status_t conv_store_list(const char *dir,
         return CONV_STORE_INVALID_ARGUMENT;
     }
     *count = 0u;
-    if (build_paths(dir) != 0) {
+    if (file_store_path(file_path, dir, CONV_STORE_FILE_NAME) != 0) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
 
-    FILE *f = open_existing();
+    FILE *f = file_store_open(file_path);
     if (f == NULL) {
         return CONV_STORE_OK;
     }
@@ -509,11 +458,11 @@ conv_store_status_t conv_store_load(chat_model_t *model,
         return CONV_STORE_INVALID_ARGUMENT;
     }
     chat_model_reset(model);
-    if (sanitize_title(clean_title_buf, title) != 0 || build_paths(dir) != 0) {
+    if (sanitize_title(clean_title_buf, title) != 0 || file_store_path(file_path, dir, CONV_STORE_FILE_NAME) != 0) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
 
-    FILE *f = open_existing();
+    FILE *f = file_store_open(file_path);
     if (f == NULL) {
         return CONV_STORE_NOT_FOUND;
     }
@@ -648,11 +597,11 @@ conv_store_status_t conv_store_delete(const char *title,
     if (title == NULL || dir == NULL) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
-    if (sanitize_title(clean_title_buf, title) != 0 || build_paths(dir) != 0) {
+    if (sanitize_title(clean_title_buf, title) != 0 || file_store_path(file_path, dir, CONV_STORE_FILE_NAME) != 0) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
 
-    FILE *in = open_existing();
+    FILE *in = file_store_open(file_path);
     if (in == NULL) {
         return CONV_STORE_NOT_FOUND;
     }
@@ -668,12 +617,12 @@ conv_store_status_t conv_store_delete(const char *title,
         return CONV_STORE_NOT_FOUND;
     }
 
-    in = open_existing();
+    in = file_store_open(file_path);
     if (in == NULL) {
         return CONV_STORE_NOT_FOUND;
     }
 
-    FILE *out = fopen(temp_path, "wb");
+    FILE *out = file_store_open_temp(file_path);
     if (out == NULL) {
         fclose(in);
         return CONV_STORE_IO_ERROR;
@@ -682,12 +631,7 @@ conv_store_status_t conv_store_delete(const char *title,
     status = rewrite_file(in, out, NULL, clean_title_buf);
     fclose(in);
 
-    int failed = (status != CONV_STORE_OK);
-    failed |= fflush(out) != 0;
-    failed |= fclose(out) != 0;
-
-    if (failed || replace_file() != 0) {
-        remove(temp_path);
+    if (file_store_commit(file_path, out, status != CONV_STORE_OK) != 0) {
         return CONV_STORE_IO_ERROR;
     }
     return CONV_STORE_OK;
@@ -699,7 +643,7 @@ conv_store_status_t conv_store_save(const chat_model_t *model,
     if (model == NULL || title == NULL || dir == NULL) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
-    if (sanitize_title(clean_title_buf, title) != 0 || build_paths(dir) != 0) {
+    if (sanitize_title(clean_title_buf, title) != 0 || file_store_path(file_path, dir, CONV_STORE_FILE_NAME) != 0) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
 
@@ -725,7 +669,7 @@ conv_store_status_t conv_store_save(const chat_model_t *model,
 
     bool file_exists = false;
     scan_summary_t summary = {0, false};
-    FILE *in = open_existing();
+    FILE *in = file_store_open(file_path);
     if (in != NULL) {
         file_exists = true;
         conv_store_status_t st = scan_file(in, clean_title_buf, &summary);
@@ -738,17 +682,16 @@ conv_store_status_t conv_store_save(const chat_model_t *model,
         }
     }
 
-    FILE *out = fopen(temp_path, "wb");
+    FILE *out = file_store_open_temp(file_path);
     if (out == NULL) {
         return CONV_STORE_IO_ERROR;
     }
 
     conv_store_status_t status = CONV_STORE_OK;
     if (file_exists) {
-        in = open_existing();
+        in = file_store_open(file_path);
         if (in == NULL) {
-            fclose(out);
-            remove(temp_path);
+            file_store_commit(file_path, out, 1);
             return CONV_STORE_IO_ERROR;
         }
         status = rewrite_file(in, out, model, clean_title_buf);
@@ -759,12 +702,7 @@ conv_store_status_t conv_store_save(const chat_model_t *model,
         }
     }
 
-    int failed = (status != CONV_STORE_OK);
-    failed |= fflush(out) != 0;
-    failed |= fclose(out) != 0;
-
-    if (failed || replace_file() != 0) {
-        remove(temp_path);
+    if (file_store_commit(file_path, out, status != CONV_STORE_OK) != 0) {
         return CONV_STORE_IO_ERROR;
     }
     return CONV_STORE_OK;
