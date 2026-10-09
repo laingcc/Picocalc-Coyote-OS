@@ -235,7 +235,7 @@ static size_t provider_measure(void *context,
     if (n > OLLAMA_MAX_MESSAGES) {
         return (size_t)-1; /* cannot be serialised at all */
     }
-    if (ollama_provider_build_request(&provider, "m", converted, n, 8) != 0) {
+    if (ollama_provider_build_request(&provider, "m", converted, n, 8, "", 80) != 0) {
         return (size_t)-1; /* request does not fit the fixed buffer */
     }
     return ollama_provider_request_length(&provider);

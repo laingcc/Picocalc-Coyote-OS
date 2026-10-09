@@ -65,7 +65,9 @@ size_t chat_request_measure(void *context,
         return CHAT_REQUEST_UNMEASURABLE;
     }
     if (ollama_provider_build_request(&measure->scratch, measure->config->model, converted, count,
-                                      (int)measure->config->max_predict) != 0) {
+                                      (int)measure->config->max_predict,
+                                      measure->config->system_prompt,
+                                      (int)measure->config->temperature) != 0) {
         return CHAT_REQUEST_UNMEASURABLE;
     }
     return ollama_provider_request_length(&measure->scratch);

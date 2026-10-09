@@ -25,6 +25,10 @@
 #define AI_CONFIG_IDLE_TIMEOUT_MS_MAX 120000u
 #define AI_CONFIG_MAX_PREDICT_MIN 1u
 #define AI_CONFIG_MAX_PREDICT_MAX 4096u
+#define AI_CONFIG_SYSTEM_PROMPT_CAPACITY 128u
+#define AI_CONFIG_TEMPERATURE_MIN 0u
+#define AI_CONFIG_TEMPERATURE_MAX 200u
+#define AI_CONFIG_TEMPERATURE_DEFAULT 80u
 
 typedef enum {
     AI_CONFIG_OK = 0,
@@ -54,6 +58,8 @@ typedef struct {
     uint32_t request_timeout_ms;
     uint32_t idle_timeout_ms;
     uint32_t max_predict;
+    char system_prompt[AI_CONFIG_SYSTEM_PROMPT_CAPACITY];
+    uint16_t temperature;
 } ai_config_t;
 
 typedef struct {

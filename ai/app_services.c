@@ -538,7 +538,9 @@ int app_services_chat_start(const ollama_message_t *messages,
     services.callback_context = context;
     ollama_provider_init(&services.provider, on_provider_event, NULL);
     if (ollama_provider_build_request(&services.provider, services.config.model, messages, message_count,
-                                      (int)services.config.max_predict) != 0) {
+                                      (int)services.config.max_predict,
+                                      services.config.system_prompt,
+                                      (int)services.config.temperature) != 0) {
         return -1;
     }
 
