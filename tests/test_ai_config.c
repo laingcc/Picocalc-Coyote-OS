@@ -84,7 +84,7 @@ static void check_serialize_defaults(void) {
         "request_timeout_ms=120000\n"
         "idle_timeout_ms=15000\n"
         "max_predict=384\n"
-        "system_prompt=\n"
+        "system_prompt=" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\n"
         "temperature=80\n";
     static const char expected_with_host[] =
         "version=1\n"
@@ -99,7 +99,7 @@ static void check_serialize_defaults(void) {
         "request_timeout_ms=120000\n"
         "idle_timeout_ms=15000\n"
         "max_predict=384\n"
-        "system_prompt=\n"
+        "system_prompt=" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\n"
         "temperature=80\n";
     ai_config_t config;
     ai_config_t reloaded;
@@ -277,7 +277,7 @@ static void check_system_prompt_and_temperature(void) {
 
     CHECK(ai_config_init(&config) == AI_CONFIG_OK);
     CHECK(config.temperature == 80u);
-    CHECK(config.system_prompt[0] == '\0');
+    CHECK_STR_EQ(config.system_prompt, AI_CONFIG_DEFAULT_SYSTEM_PROMPT);
 
     memcpy(config.system_prompt, "be brief", sizeof("be brief"));
     config.temperature = 150u;

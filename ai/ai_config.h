@@ -29,6 +29,8 @@
 #define AI_CONFIG_TEMPERATURE_MIN 0u
 #define AI_CONFIG_TEMPERATURE_MAX 200u
 #define AI_CONFIG_TEMPERATURE_DEFAULT 80u
+#define AI_CONFIG_DEFAULT_SYSTEM_PROMPT \
+    "You are an AI on a Picocalc handheld with a tiny screen and keyboard. Be concise; avoid markdown and long code."
 
 typedef enum {
     AI_CONFIG_OK = 0,

@@ -42,6 +42,8 @@ ai_config_status_t ai_config_init(ai_config_t *config) {
     config->idle_timeout_ms = 15000u;
     config->max_predict = 384u;
     config->temperature = 80u;
+    memcpy(config->system_prompt, AI_CONFIG_DEFAULT_SYSTEM_PROMPT,
+           sizeof(AI_CONFIG_DEFAULT_SYSTEM_PROMPT));
     return AI_CONFIG_OK;
 }
 
