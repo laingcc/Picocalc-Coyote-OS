@@ -7,6 +7,17 @@
 extern int g_tests_run;
 extern int g_tests_failed;
 
+/* ---- rename double --------------------------------------------------------
+ * file_store.c is compiled with rename mapped to file_store_test_rename. */
+
+extern int rename_calls;
+extern int rename_fail_call; /* 1-based call to fail; 0 fails none */
+extern int rename_fail_all;
+extern int rename_like_fat;  /* refuse to replace an existing file */
+
+int exists(const char *path);
+void reset_rename(void);
+
 #define CHECK(condition)                                                       \
     do {                                                                       \
         g_tests_run++;                                                         \

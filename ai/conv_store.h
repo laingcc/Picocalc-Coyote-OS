@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include "ai/chat_model.h"
+#include "ai/file_store.h"
 
 /*
  * Persistence of AI chat conversations as <dir>/convs.txt.
@@ -21,12 +22,12 @@
  */
 
 #define CONV_STORE_FILE_NAME "convs.txt"
-#define CONV_STORE_TEMP_NAME "convs.txt.tmp"
-#define CONV_STORE_BACKUP_NAME "convs.txt.bak"
+#define CONV_STORE_TEMP_NAME CONV_STORE_FILE_NAME FILE_STORE_TEMP_SUFFIX
+#define CONV_STORE_BACKUP_NAME CONV_STORE_FILE_NAME FILE_STORE_BACKUP_SUFFIX
 
 #define CONV_STORE_MAX_CONVERSATIONS 8u
 #define CONV_STORE_TITLE_MAX 63u
-#define CONV_STORE_PATH_CAPACITY 128u
+#define CONV_STORE_PATH_CAPACITY FILE_STORE_PATH_CAPACITY
 
 typedef enum {
     CONV_STORE_OK = 0,

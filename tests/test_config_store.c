@@ -1,4 +1,3 @@
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -10,44 +9,6 @@
 
 static const char *const test_dir = ".";
 static char file_text[4096];
-
-/* ---- rename double --------------------------------------------------------
- * config_store.c is compiled with rename mapped to this function. */
-
-static int rename_calls;
-static int rename_fail_call; /* 1-based call to fail; 0 fails none */
-static int rename_fail_all;
-static int rename_like_fat;  /* refuse to replace an existing file */
-
-static int exists(const char *path) {
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
-        return 0;
-    }
-    fclose(file);
-    return 1;
-}
-
-int config_store_test_rename(const char *old_path, const char *new_path);
-int config_store_test_rename(const char *old_path, const char *new_path) {
-    rename_calls++;
-    if (rename_fail_all || rename_calls == rename_fail_call) {
-        errno = EIO;
-        return -1;
-    }
-    if (rename_like_fat && exists(new_path)) {
-        errno = EEXIST;
-        return -1;
-    }
-    return rename(old_path, new_path);
-}
-
-static void reset_rename(void) {
-    rename_calls = 0;
-    rename_fail_call = 0;
-    rename_fail_all = 0;
-    rename_like_fat = 0;
-}
 
 /* ---- helpers --------------------------------------------------------------- */
 
