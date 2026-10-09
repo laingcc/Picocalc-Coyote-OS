@@ -121,7 +121,7 @@ typedef struct {
      * http_stream_on_connected or http_stream_on_error will follow, or
      * HTTP_STREAM_IO_ERROR if no connection was created.
      */
-    int (*tcp_connect)(void *context, uint16_t port);
+    int (*tcp_connect)(void *context, uint16_t port, bool use_tls);
 
     /*
      * Queue up to length bytes, copying them.  Returns the number of bytes
@@ -156,6 +156,7 @@ typedef struct {
     const char *path;
     const char *content_type;
     const char *bearer_token;
+    bool use_tls;
     provider_request_t body;
     http_stream_sink_t sink;
     uint32_t connect_timeout_ms; /* resolve + connect */
@@ -172,6 +173,7 @@ typedef struct {
     provider_request_t body;
     http_stream_sink_t sink;
     uint16_t port;
+    bool use_tls;
     uint32_t connect_timeout_ms;
     uint32_t idle_timeout_ms;
     uint32_t request_timeout_ms;

@@ -310,10 +310,10 @@ static int skip_value(const char **cursor, int depth) {
 }
 
 /*
- * Parse the "message" object of an Ollama record, extracting an optional
- * "content" string.  Unknown members are skipped.
+ * Parse the "delta" or "message" object of an Ollama/DeepSeek record,
+ * extracting an optional "content" string.  Unknown members are skipped.
  */
-static int parse_message_object(const char **cursor, json_stream_t *stream, bool *has_content) {
+static int parse_delta_or_message_object(const char **cursor, json_stream_t *stream, bool *has_content) {
     const char *p = skip_whitespace(*cursor);
     if (*p != '{') {
         return -1;
@@ -365,6 +365,157 @@ static int parse_message_object(const char **cursor, json_stream_t *stream, bool
     return 0;
 }
 
+/*
+ * Parse the "choices" array of an OpenAI/DeepSeek record.
+ */
+static int parse_choices_array(const char **cursor, json_stream_t *stream, bool *has_content, bool *has_done, bool *done_value) {
+    const char *p = skip_whitespace(*cursor);
+    if (*p != '[') {
+        return -1;
+    }
+    p++;
+    p = skip_whitespace(p);
+    if (*p == ']') {
+        *cursor = p + 1u;
+        return 0;
+    }
+    if (*p != '{') {
+        return skip_value(cursor, 0);
+    }
+    p++;
+    char key[64];
+    for (;;) {
+        p = skip_whitespace(p);
+        if (*p == '}') {
+            p++;
+            break;
+        }
+        if (parse_string(&p, key, sizeof(key), NULL, NULL) != 0) {
+            return -1;
+        }
+        p = skip_whitespace(p);
+        if (*p != ':') {
+            return -1;
+        }
+        p++;
+        p = skip_whitespace(p);
+        if (strcmp(key, "delta") == 0) {
+            if (parse_delta_or_message_object(&p, stream, has_content) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "finish_reason") == 0) {
+            if (*p == '"') {
+                char reason[32];
+                size_t rlen = 0;
+                if (parse_string(&p, reason, sizeof(reason), &rlen, NULL) != 0) {
+                    return -1;
+                }
+                if (rlen > 0u && strcmp(reason, "null") != 0) {
+                    *has_done = true;
+                    *done_value = true;
+                }
+            } else if (skip_literal(&p, "null") == 0) {
+                /* null finish_reason */
+            } else if (skip_value(&p, 0) != 0) {
+                return -1;
+            }
+        } else if (skip_value(&p, 0) != 0) {
+            return -1;
+        }
+        p = skip_whitespace(p);
+        if (*p == ',') {
+            p++;
+            continue;
+        }
+        if (*p == '}') {
+            p++;
+            break;
+        }
+        return -1;
+    }
+    p = skip_whitespace(p);
+    while (*p == ',') {
+        p++;
+        if (skip_value(&p, 0) != 0) {
+            return -1;
+        }
+        p = skip_whitespace(p);
+    }
+    if (*p != ']') {
+        return -1;
+    }
+    *cursor = p + 1u;
+    return 0;
+}
+
+/*
+ * Parse the "error" field (either a string or an object with "message").
+ */
+static int parse_error_field(const char **cursor, json_stream_t *stream, bool *has_error) {
+    const char *p = skip_whitespace(*cursor);
+    if (*p == '"') {
+        bool over = false;
+        size_t length = 0;
+        if (parse_string(&p, stream->error_text, sizeof(stream->error_text), &length, &over) != 0) {
+            return -1;
+        }
+        if (over) {
+            return -1;
+        }
+        stream->error_length = length;
+        *has_error = true;
+        *cursor = p;
+        return 0;
+    }
+    if (*p == '{') {
+        p++;
+        char key[64];
+        for (;;) {
+            p = skip_whitespace(p);
+            if (*p == '}') {
+                p++;
+                break;
+            }
+            if (parse_string(&p, key, sizeof(key), NULL, NULL) != 0) {
+                return -1;
+            }
+            p = skip_whitespace(p);
+            if (*p != ':') {
+                return -1;
+            }
+            p++;
+            p = skip_whitespace(p);
+            if (strcmp(key, "message") == 0) {
+                bool over = false;
+                size_t length = 0;
+                if (parse_string(&p, stream->error_text, sizeof(stream->error_text), &length, &over) != 0) {
+                    return -1;
+                }
+                if (over) {
+                    return -1;
+                }
+                stream->error_length = length;
+                *has_error = true;
+            } else if (skip_value(&p, 0) != 0) {
+                return -1;
+            }
+            p = skip_whitespace(p);
+            if (*p == ',') {
+                p++;
+                continue;
+            }
+            if (*p == '}') {
+                p++;
+                break;
+            }
+            return -1;
+        }
+        *cursor = p;
+        return 0;
+    }
+    return -1;
+}
+
 static int parse_record(json_stream_t *stream) {
     stream->payload_length = 0u;
     stream->error_length = 0u;
@@ -395,16 +546,9 @@ static int parse_record(json_stream_t *stream) {
         p++;
         p = skip_whitespace(p);
         if (strcmp(key, "error") == 0) {
-            bool over = false;
-            size_t length = 0;
-            if (parse_string(&p, stream->error_text, sizeof(stream->error_text), &length, &over) != 0) {
+            if (parse_error_field(&p, stream, &has_error) != 0) {
                 return -1;
             }
-            if (over) {
-                return -1; /* oversized error message */
-            }
-            stream->error_length = length;
-            has_error = true;
         } else if (strcmp(key, "done") == 0) {
             if (skip_literal(&p, "true") == 0) {
                 done_value = true;
@@ -415,7 +559,11 @@ static int parse_record(json_stream_t *stream) {
             }
             has_done = true;
         } else if (strcmp(key, "message") == 0) {
-            if (parse_message_object(&p, stream, &has_content) != 0) {
+            if (parse_delta_or_message_object(&p, stream, &has_content) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "choices") == 0) {
+            if (parse_choices_array(&p, stream, &has_content, &has_done, &done_value) != 0) {
                 return -1;
             }
         } else if (skip_value(&p, 0) != 0) {

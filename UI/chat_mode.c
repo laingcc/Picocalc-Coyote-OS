@@ -381,10 +381,10 @@ static void settings_menu(void) {
 }
 
 static void provider_menu(void) {
-    static const char *const providers[] = {" ollama ", " deepseek ", " muse "};
-    int sel = menu(" PROVIDER ", providers, 3, 0);
+    static const char *const providers[] = {" ollama ", " deepseek "};
+    int sel = menu(" PROVIDER ", providers, 2, 0);
     if (sel < 0) return;
-    const char *choice = (sel == 0) ? "ollama" : ((sel == 1) ? "deepseek" : "muse");
+    const char *choice = (sel == 0) ? "ollama" : "deepseek";
     if (strcmp(config.provider, choice) == 0) return;
     if (chat_settings_set(&config, CHAT_SETTING_PROVIDER, choice) == AI_CONFIG_OK) apply_config();
 }

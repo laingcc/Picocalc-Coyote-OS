@@ -288,9 +288,10 @@ static int net_dns_resolve(void *context, const char *host) {
     return err == ERR_INPROGRESS ? HTTP_STREAM_IO_PENDING : HTTP_STREAM_IO_ERROR;
 }
 
-static int net_tcp_connect(void *context, uint16_t port) {
+static int net_tcp_connect(void *context, uint16_t port, bool use_tls) {
     struct tcp_pcb *pcb;
     (void)context;
+    (void)use_tls;
     if (net.pcb != NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
@@ -386,9 +387,10 @@ static int net_dns_resolve(void *context, const char *host) {
     return HTTP_STREAM_IO_ERROR;
 }
 
-static int net_tcp_connect(void *context, uint16_t port) {
+static int net_tcp_connect(void *context, uint16_t port, bool use_tls) {
     (void)context;
     (void)port;
+    (void)use_tls;
     return HTTP_STREAM_IO_ERROR;
 }
 
@@ -553,6 +555,10 @@ int app_services_chat_start(const ollama_message_t *messages,
     memset(&request, 0, sizeof(request));
     request.host = services.config.host;
     request.port = services.config.port;
+    request.use_tls = (strcmp(services.config.provider, "deepseek") == 0);
+    if (request.port == 0u) {
+        request.port = request.use_tls ? 443u : 11434u;
+    }
     request.connect_timeout_ms = services.config.connect_timeout_ms;
     request.idle_timeout_ms = services.config.idle_timeout_ms;
     request.request_timeout_ms = services.config.request_timeout_ms;

@@ -27,6 +27,7 @@ typedef struct {
     int connect_result;
     int connect_calls;
     uint16_t connect_port;
+    bool connect_use_tls;
 
     int live; /* connections opened and not yet closed/aborted */
     int closes;
@@ -59,10 +60,11 @@ static int fake_dns_resolve(void *context, const char *host) {
     return net->dns_result;
 }
 
-static int fake_tcp_connect(void *context, uint16_t port) {
+static int fake_tcp_connect(void *context, uint16_t port, bool use_tls) {
     fake_net_t *net = (fake_net_t *)context;
     net->connect_calls++;
     net->connect_port = port;
+    net->connect_use_tls = use_tls;
     if (net->connect_result != HTTP_STREAM_IO_PENDING) {
         return net->connect_result;
     }
@@ -1396,8 +1398,42 @@ static void check_wifi_loss_mid_request(void) {
     CHECK(h->net.aborts == 0);
 }
 
+static void check_bearer_token_and_tls_headers(void) {
+    harness_t *h = &g_harness;
+    http_stream_request_t request;
+    ollama_message_t messages[1] = {{"user", "hi"}};
+
+    harness_reset(h);
+    ollama_provider_init(&h->provider, on_event, h);
+    CHECK(ollama_provider_build_request(&h->provider, "m", messages, 1, 8) == 0);
+
+    memset(&request, 0, sizeof(request));
+    request.host = "api.deepseek.com";
+    request.port = 443u;
+    request.method = "POST";
+    request.path = "/chat/completions";
+    request.content_type = "application/json";
+    request.bearer_token = "sk-testsecretkey123";
+    request.use_tls = true;
+    request.body = ollama_provider_request(&h->provider);
+    request.sink.feed = sink_feed;
+    request.sink.finish = sink_finish;
+    request.sink.context = &h->provider;
+
+    CHECK(http_stream_start(&h->stream, &request) == 0);
+    http_stream_on_dns(&h->stream, true);
+    CHECK(h->net.connect_port == 443u);
+    CHECK(h->net.connect_use_tls == true);
+
+    http_stream_on_connected(&h->stream, true);
+    CHECK(strstr(h->net.wire, "Authorization: Bearer sk-testsecretkey123\r\n") != NULL);
+    CHECK(strstr(h->net.wire, "Content-Type: application/json\r\n") != NULL);
+    CHECK(strstr(h->net.wire, "Content-Length: 99\r\n") != NULL);
+}
+
 void test_http_stream(void) {
     check_happy_path_content_length();
+    check_bearer_token_and_tls_headers();
     check_dns_resolved_immediately();
     check_dns_failure();
     check_connection_refused();

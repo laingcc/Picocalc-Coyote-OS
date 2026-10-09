@@ -3,17 +3,29 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "ai/json_stream.h"
-
-static void emit_event(deepseek_provider_t *provider, provider_event_type_t type, const char *data, size_t length) {
-    if (provider->callback == NULL) {
-        return;
+static void json_bridge(void *context, const json_stream_event_t *event) {
+    deepseek_provider_t *provider = (deepseek_provider_t *)context;
+    provider_event_t out;
+    out.data = event->data;
+    out.length = event->length;
+    switch (event->type) {
+        case JSON_STREAM_EVENT_CONTENT:
+            out.type = PROVIDER_EVENT_CONTENT;
+            break;
+        case JSON_STREAM_EVENT_DONE:
+            out.type = PROVIDER_EVENT_DONE;
+            provider->done = true;
+            break;
+        case JSON_STREAM_EVENT_ERROR:
+            out.type = PROVIDER_EVENT_ERROR;
+            provider->failed = true;
+            break;
+        default:
+            return;
     }
-    provider_event_t event;
-    event.type = type;
-    event.data = data;
-    event.length = length;
-    provider->callback(provider->callback_context, &event);
+    if (provider->callback != NULL) {
+        provider->callback(provider->callback_context, &out);
+    }
 }
 
 static bool append_raw(deepseek_provider_t *provider, const char *text, size_t length) {
@@ -73,6 +85,7 @@ void deepseek_provider_init(deepseek_provider_t *provider, provider_event_callba
     memset(provider, 0, sizeof(*provider));
     provider->callback = callback;
     provider->callback_context = context;
+    json_stream_init(&provider->stream, json_bridge, provider);
 }
 
 int deepseek_provider_build_request(deepseek_provider_t *provider,
@@ -90,6 +103,7 @@ int deepseek_provider_build_request(deepseek_provider_t *provider,
     provider->done = false;
     provider->line_length = 0u;
     provider->overflow = false;
+    json_stream_init(&provider->stream, json_bridge, provider);
 
     if (model == NULL || model[0] == '\0' || strlen(model) > DEEPSEEK_MODEL_MAX) {
         return -1;
@@ -189,144 +203,33 @@ provider_request_t deepseek_provider_request(deepseek_provider_t *provider) {
     return request;
 }
 
-/* Helper to parse JSON strings and extract fields from SSE json payload */
-static const char *skip_spaces(const char *p) {
-    while (*p == ' ' || *p == '\t' || *p == '\r') {
-        p++;
-    }
-    return p;
-}
-
-/* Find key in JSON object and return pointer to its value */
-static const char *find_json_key(const char *json, const char *key) {
-    char search_key[128];
-    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-    const char *p = strstr(json, search_key);
-    if (p == NULL) {
-        return NULL;
-    }
-    p += strlen(search_key);
-    p = skip_spaces(p);
-    if (*p == ':') {
-        p++;
-        return skip_spaces(p);
-    }
-    return NULL;
-}
-
-/* Extract string value from cursor at quoted string: "value" */
-static int extract_json_string(const char *val_start, char *out, size_t out_cap, size_t *out_len) {
-    if (val_start == NULL || *val_start != '"') {
-        return -1;
-    }
-    val_start++;
-    const char *end = val_start;
-    while (*end != '\0') {
-        if (*end == '"' && *(end - 1) != '\\') {
-            break;
-        }
-        end++;
-    }
-    if (*end != '"') {
-        return -1;
-    }
-    size_t src_len = (size_t)(end - val_start);
-    if (json_unescape_string(val_start, src_len, out, out_cap, out_len) != 0) {
-        return -1;
-    }
-    return 0;
-}
-
-static int parse_deepseek_line(deepseek_provider_t *provider, const char *line) {
-    const char *p = skip_spaces(line);
-    if (*p == '\0') {
-        return 0; /* empty line */
-    }
-
+static int process_line(deepseek_provider_t *provider) {
+    const char *p = provider->line;
+    while (*p == ' ' || *p == '\t' || *p == '\r') p++;
     if (strncmp(p, "data:", 5) == 0) {
         p += 5;
-        p = skip_spaces(p);
+        while (*p == ' ' || *p == '\t' || *p == '\r') p++;
     }
+    size_t plen = strlen(p);
+    while (plen > 0 && (p[plen - 1] == '\r' || p[plen - 1] == ' ' || p[plen - 1] == '\t')) plen--;
 
-    if (strcmp(p, "[DONE]") == 0) {
-        if (!provider->done) {
-            provider->done = true;
-            emit_event(provider, PROVIDER_EVENT_DONE, NULL, 0u);
+    if (plen == 0) {
+        return 0;
+    }
+    if (plen == 6 && strncmp(p, "[DONE]", 6) == 0) {
+        provider->done = true;
+        provider_event_t event = {PROVIDER_EVENT_DONE, NULL, 0u};
+        if (provider->callback != NULL) {
+            provider->callback(provider->callback_context, &event);
         }
         return 0;
     }
-
-    if (*p != '{') {
-        return 0; /* non-JSON comment or SSE line */
+    if (*p == '{') {
+        char record[DEEPSEEK_RECORD_MAX + 2u];
+        memcpy(record, p, plen);
+        record[plen] = '\n';
+        return json_stream_feed(&provider->stream, record, plen + 1u);
     }
-
-    /* Check for error object */
-    const char *err_val = find_json_key(p, "error");
-    if (err_val != NULL) {
-        size_t err_len = 0;
-        if (*err_val == '{') {
-            const char *msg_val = find_json_key(err_val, "message");
-            if (msg_val != NULL) {
-                extract_json_string(msg_val, provider->error_text, sizeof(provider->error_text), &err_len);
-            }
-        } else if (*err_val == '"') {
-            extract_json_string(err_val, provider->error_text, sizeof(provider->error_text), &err_len);
-        }
-        if (err_len == 0u) {
-            snprintf(provider->error_text, sizeof(provider->error_text), "DeepSeek error");
-            err_len = strlen(provider->error_text);
-        }
-        provider->failed = true;
-        emit_event(provider, PROVIDER_EVENT_ERROR, provider->error_text, err_len);
-        return 0;
-    }
-
-    /* Check choices array */
-    const char *choices_val = find_json_key(p, "choices");
-    if (choices_val != NULL) {
-        /* Check finish_reason */
-        const char *finish_val = find_json_key(choices_val, "finish_reason");
-        char finish_reason[32];
-        size_t finish_len = 0;
-        if (finish_val != NULL && extract_json_string(finish_val, finish_reason, sizeof(finish_reason), &finish_len) == 0) {
-            if (finish_len > 0u && strcmp(finish_reason, "null") != 0) {
-                /* Non-null finish_reason (e.g. "stop", "length") */
-                /* Extract delta content first if any */
-                const char *delta_val = find_json_key(choices_val, "delta");
-                if (delta_val != NULL) {
-                    const char *content_val = find_json_key(delta_val, "content");
-                    if (content_val != NULL) {
-                        size_t content_len = 0;
-                        if (extract_json_string(content_val, provider->payload, sizeof(provider->payload), &content_len) == 0) {
-                            if (content_len > 0u) {
-                                emit_event(provider, PROVIDER_EVENT_CONTENT, provider->payload, content_len);
-                            }
-                        }
-                    }
-                }
-                if (!provider->done) {
-                    provider->done = true;
-                    emit_event(provider, PROVIDER_EVENT_DONE, NULL, 0u);
-                }
-                return 0;
-            }
-        }
-
-        /* Check delta content */
-        const char *delta_val = find_json_key(choices_val, "delta");
-        if (delta_val != NULL) {
-            const char *content_val = find_json_key(delta_val, "content");
-            if (content_val != NULL) {
-                size_t content_len = 0;
-                if (extract_json_string(content_val, provider->payload, sizeof(provider->payload), &content_len) == 0) {
-                    if (content_len > 0u) {
-                        emit_event(provider, PROVIDER_EVENT_CONTENT, provider->payload, content_len);
-                    }
-                }
-            }
-        }
-    }
-
     return 0;
 }
 
@@ -345,8 +248,10 @@ int deepseek_provider_feed(deepseek_provider_t *provider, const char *data, size
             return 0;
         }
         provider->failed = true;
-        snprintf(provider->error_text, sizeof(provider->error_text), "data after done");
-        emit_event(provider, PROVIDER_EVENT_ERROR, provider->error_text, strlen(provider->error_text));
+        provider_event_t event = {PROVIDER_EVENT_ERROR, "data after done", 15u};
+        if (provider->callback != NULL) {
+            provider->callback(provider->callback_context, &event);
+        }
         return -1;
     }
 
@@ -354,26 +259,30 @@ int deepseek_provider_feed(deepseek_provider_t *provider, const char *data, size
         char c = data[i];
         if (provider->done) {
             provider->failed = true;
-            snprintf(provider->error_text, sizeof(provider->error_text), "data after done");
-            emit_event(provider, PROVIDER_EVENT_ERROR, provider->error_text, strlen(provider->error_text));
+            provider_event_t event = {PROVIDER_EVENT_ERROR, "data after done", 15u};
+            if (provider->callback != NULL) {
+                provider->callback(provider->callback_context, &event);
+            }
             return -1;
         }
         if (c == '\n') {
             if (provider->overflow) {
                 provider->failed = true;
-                snprintf(provider->error_text, sizeof(provider->error_text), "line exceeds maximum length");
-                emit_event(provider, PROVIDER_EVENT_ERROR, provider->error_text, strlen(provider->error_text));
+                provider_event_t event = {PROVIDER_EVENT_ERROR, "line exceeds maximum length", 27u};
+                if (provider->callback != NULL) {
+                    provider->callback(provider->callback_context, &event);
+                }
                 return -1;
             }
             provider->line[provider->line_length] = '\0';
-            parse_deepseek_line(provider, provider->line);
+            int rc = process_line(provider);
             provider->line_length = 0u;
             provider->overflow = false;
-            if (provider->failed) {
+            if (rc != 0 || provider->failed) {
                 if (i + 1u < length) {
                     return -1;
                 }
-                return 0;
+                return provider->failed ? 0 : -1;
             }
         } else if (provider->line_length < DEEPSEEK_RECORD_MAX) {
             provider->line[provider->line_length++] = c;
@@ -394,21 +303,23 @@ int deepseek_provider_finish(deepseek_provider_t *provider) {
     if (provider->line_length > 0u) {
         if (provider->overflow) {
             provider->failed = true;
-            snprintf(provider->error_text, sizeof(provider->error_text), "line exceeds maximum length");
-            emit_event(provider, PROVIDER_EVENT_ERROR, provider->error_text, strlen(provider->error_text));
             return -1;
         }
         provider->line[provider->line_length] = '\0';
-        parse_deepseek_line(provider, provider->line);
+        process_line(provider);
         provider->line_length = 0u;
     }
-    if (!provider->done && !provider->failed) {
-        provider->failed = true;
-        snprintf(provider->error_text, sizeof(provider->error_text), "truncated response");
-        emit_event(provider, PROVIDER_EVENT_ERROR, provider->error_text, strlen(provider->error_text));
+    if (provider->failed) {
         return -1;
     }
-    return provider->failed ? -1 : 0;
+    if (!provider->done) {
+        int rc = json_stream_finish(&provider->stream);
+        if (rc != 0) {
+            provider->failed = true;
+        }
+        return rc;
+    }
+    return 0;
 }
 
 bool deepseek_provider_is_done(const deepseek_provider_t *provider) {

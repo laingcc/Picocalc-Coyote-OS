@@ -121,7 +121,7 @@ static void pump_send(http_stream_t *stream) {
 }
 
 static void begin_connect(http_stream_t *stream) {
-    if (stream->ops->tcp_connect(stream->ops_context, stream->port) != HTTP_STREAM_IO_PENDING) {
+    if (stream->ops->tcp_connect(stream->ops_context, stream->port, stream->use_tls) != HTTP_STREAM_IO_PENDING) {
         fail(stream, HTTP_STREAM_ERROR_CONNECT);
         return;
     }
@@ -207,6 +207,7 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
     stream->body = request->body;
     stream->sink = request->sink;
     stream->port = request->port;
+    stream->use_tls = request->use_tls;
     stream->connect_timeout_ms = request->connect_timeout_ms;
     stream->idle_timeout_ms = request->idle_timeout_ms;
     stream->request_timeout_ms = request->request_timeout_ms;

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "ai/json_stream.h"
 #include "ai/provider.h"
 
 /*
@@ -23,7 +24,7 @@
 #define DEEPSEEK_ERROR_MAX 256u
 
 /* Worst-case static storage for one deepseek_provider_t. */
-#define DEEPSEEK_PROVIDER_STORAGE_MAX_BYTES 8192u
+#define DEEPSEEK_PROVIDER_STORAGE_MAX_BYTES 10240u
 
 typedef struct {
     const char *role;
@@ -41,8 +42,7 @@ typedef struct {
     size_t line_length;
     bool overflow;
 
-    char payload[DEEPSEEK_RECORD_MAX + 1u];
-    char error_text[DEEPSEEK_ERROR_MAX];
+    json_stream_t stream;
 
     provider_event_callback_t callback;
     void *callback_context;
