@@ -82,6 +82,24 @@ static bool append_int(ollama_provider_t *provider, int value) {
     return append_raw(provider, digits, length);
 }
 
+static bool append_temperature(ollama_provider_t *provider, int value) {
+    /* Emit hundredths as a decimal (80 -> "0.80") without float printf. */
+    if (value < 0 || value > 200) {
+        return false;
+    }
+    char frac[3];
+    frac[0] = (char)('0' + ((value % 100) / 10));
+    frac[1] = (char)('0' + ((value % 100) % 10));
+    frac[2] = '\0';
+    if (!append_int(provider, value / 100)) {
+        return false;
+    }
+    if (!append_literal(provider, ".")) {
+        return false;
+    }
+    return append_literal(provider, frac);
+}
+
 void ollama_provider_init(ollama_provider_t *provider, provider_event_callback_t callback, void *context) {
     if (provider == NULL) {
         return;
@@ -96,7 +114,9 @@ int ollama_provider_build_request(ollama_provider_t *provider,
                                   const char *model,
                                   const ollama_message_t *messages,
                                   size_t message_count,
-                                  int num_predict) {
+                                  int num_predict,
+                                  const char *system_prompt,
+                                  int temperature) {
     if (provider == NULL) {
         return -1;
     }
@@ -119,6 +139,9 @@ int ollama_provider_build_request(ollama_provider_t *provider,
     if (num_predict < 0) {
         return -1;
     }
+    if (temperature < 0 || temperature > 200) {
+        return -1;
+    }
 
     if (!append_literal(provider, "{\"model\":\"")) {
         return -1;
@@ -129,13 +152,26 @@ int ollama_provider_build_request(ollama_provider_t *provider,
     if (!append_literal(provider, "\",\"messages\":[")) {
         return -1;
     }
+    bool wrote_any = false;
+    if (system_prompt != NULL && system_prompt[0] != '\0') {
+        if (!append_literal(provider, "{\"role\":\"system\",\"content\":\"")) {
+            return -1;
+        }
+        if (!append_escaped(provider, system_prompt, strlen(system_prompt))) {
+            return -1;
+        }
+        if (!append_literal(provider, "\"}")) {
+            return -1;
+        }
+        wrote_any = true;
+    }
     for (size_t i = 0; i < message_count; i++) {
         const char *role = messages[i].role != NULL ? messages[i].role : "";
         const char *content = messages[i].content != NULL ? messages[i].content : "";
         if (role[0] == '\0') {
             return -1;
         }
-        if (i > 0u && !append_literal(provider, ",")) {
+        if ((wrote_any || i > 0u) && !append_literal(provider, ",")) {
             return -1;
         }
         if (!append_literal(provider, "{\"role\":\"")) {
@@ -158,6 +194,12 @@ int ollama_provider_build_request(ollama_provider_t *provider,
         return -1;
     }
     if (!append_int(provider, num_predict)) {
+        return -1;
+    }
+    if (!append_literal(provider, ",\"temperature\":")) {
+        return -1;
+    }
+    if (!append_temperature(provider, temperature)) {
         return -1;
     }
     if (!append_literal(provider, "}}")) {

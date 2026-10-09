@@ -58,14 +58,17 @@ void ollama_provider_init(ollama_provider_t *provider, provider_event_callback_t
 /*
  * Serialise a request.  Returns 0 on success, -1 if the model is empty, the
  * message count exceeds OLLAMA_MAX_MESSAGES, message_count is non-zero with a
- * NULL messages array, or the request does not fit in OLLAMA_REQUEST_MAX bytes.
- * num_predict must be non-negative.
+ * NULL messages array, num_predict is negative, temperature is outside
+ * 0..200 (hundredths), or the request does not fit in OLLAMA_REQUEST_MAX bytes.
+ * system_prompt may be NULL or empty to omit the leading system message.
  */
 int ollama_provider_build_request(ollama_provider_t *provider,
                                   const char *model,
                                   const ollama_message_t *messages,
                                   size_t message_count,
-                                  int num_predict);
+                                  int num_predict,
+                                  const char *system_prompt,
+                                  int temperature);
 
 /* Measured length, in bytes, of the built request body. */
 size_t ollama_provider_request_length(const ollama_provider_t *provider);

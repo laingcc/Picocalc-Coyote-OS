@@ -32,10 +32,10 @@ static void check_single_message_request(void) {
     ollama_provider_init(&provider, collect, &log);
 
     ollama_message_t messages[1] = {{"user", "hi"}};
-    CHECK(ollama_provider_build_request(&provider, "llama3.2", messages, 1, 64) == 0);
+    CHECK(ollama_provider_build_request(&provider, "llama3.2", messages, 1, 64, "", 80) == 0);
 
     const char *expected = "{\"model\":\"llama3.2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
-                           "\"stream\":true,\"options\":{\"num_predict\":64}}";
+                           "\"stream\":true,\"options\":{\"num_predict\":64,\"temperature\":0.80}}";
     size_t expected_length = strlen(expected);
     CHECK(ollama_provider_request_length(&provider) == expected_length);
 
@@ -78,30 +78,30 @@ static void check_escaping_and_messages(void) {
 
     /* Content with a quote and a newline is escaped in the payload. */
     ollama_message_t single[1] = {{"user", "he\"llo\n"}};
-    CHECK(ollama_provider_build_request(&provider, "m", single, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", single, 1, 8, "", 80) == 0);
     const char *expected_single = "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"he\\\"llo\\n\"}],"
-                                  "\"stream\":true,\"options\":{\"num_predict\":8}}";
+                                  "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}";
     CHECK(ollama_provider_request_length(&provider) == strlen(expected_single));
     CHECK_BYTES_EQ(provider.body, expected_single, strlen(expected_single));
 
     /* Two messages, alternating roles. */
     ollama_message_t pair[2] = {{"user", "hi"}, {"assistant", "hello"}};
-    CHECK(ollama_provider_build_request(&provider, "m", pair, 2, 16) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", pair, 2, 16, "", 80) == 0);
     const char *expected_pair = "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"},"
                                 "{\"role\":\"assistant\",\"content\":\"hello\"}],"
-                                "\"stream\":true,\"options\":{\"num_predict\":16}}";
+                                "\"stream\":true,\"options\":{\"num_predict\":16,\"temperature\":0.80}}";
     CHECK(ollama_provider_request_length(&provider) == strlen(expected_pair));
     CHECK_BYTES_EQ(provider.body, expected_pair, strlen(expected_pair));
 
     /* num_predict formatting. */
-    CHECK(ollama_provider_build_request(&provider, "m", pair, 1, 0) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", pair, 1, 0, "", 80) == 0);
     CHECK_STR_EQ(provider.body,
                  "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
-                 "\"stream\":true,\"options\":{\"num_predict\":0}}");
-    CHECK(ollama_provider_build_request(&provider, "m", pair, 1, 1000000) == 0);
+                 "\"stream\":true,\"options\":{\"num_predict\":0,\"temperature\":0.80}}");
+    CHECK(ollama_provider_build_request(&provider, "m", pair, 1, 1000000, "", 80) == 0);
     CHECK_STR_EQ(provider.body,
                  "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
-                 "\"stream\":true,\"options\":{\"num_predict\":1000000}}");
+                 "\"stream\":true,\"options\":{\"num_predict\":1000000,\"temperature\":0.80}}");
 }
 
 static void check_rejections(void) {
@@ -117,16 +117,16 @@ static void check_rejections(void) {
         many[i].content = "x";
     }
 
-    CHECK(ollama_provider_build_request(&provider, "", one, 1, 8) == -1);
-    CHECK(ollama_provider_build_request(&provider, "m", many, 9, 8) == -1);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, -1) == -1);
+    CHECK(ollama_provider_build_request(&provider, "", one, 1, 8, "", 80) == -1);
+    CHECK(ollama_provider_build_request(&provider, "m", many, 9, 8, "", 80) == -1);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, -1, "", 80) == -1);
 
     /* A message too large for the fixed request buffer is rejected. */
     char big[3000];
     memset(big, 'a', sizeof(big) - 1u);
     big[sizeof(big) - 1u] = '\0';
     ollama_message_t huge[1] = {{"user", big}};
-    CHECK(ollama_provider_build_request(&provider, "m", huge, 1, 8) == -1);
+    CHECK(ollama_provider_build_request(&provider, "m", huge, 1, 8, "", 80) == -1);
 }
 
 static void check_feed(void) {
@@ -139,7 +139,7 @@ static void check_feed(void) {
     CHECK(ollama_provider_feed(&provider, "x", 1) == -1);
 
     ollama_message_t one[1] = {{"user", "hi"}};
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
 
     const char *response = "{\"message\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"done\":false}\n"
                            "{\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":false}\n"
@@ -150,7 +150,7 @@ static void check_feed(void) {
     for (size_t chunk = 1; chunk <= length; chunk++) {
         memset(&log, 0, sizeof(log));
         ollama_provider_init(&provider, collect, &log);
-        CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+        CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
         size_t offset = 0;
         int rc = 0;
         while (offset < length) {
@@ -178,7 +178,7 @@ static void check_feed(void) {
     /* An error record flows through as an ERROR event and latches failure. */
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
     const char *error = "{\"error\":\"boom\"}\n";
     CHECK(ollama_provider_feed(&provider, error, strlen(error)) == 0);
     CHECK(log.count == 1);
@@ -199,7 +199,7 @@ static void check_terminal_semantics(void) {
     /* content + EOF: the stream did not reach a done terminal. */
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
     CHECK(ollama_provider_feed(&provider, content, strlen(content)) == 0);
     CHECK(log.count == 1);
     CHECK(log.type[0] == PROVIDER_EVENT_CONTENT);
@@ -215,7 +215,7 @@ static void check_terminal_semantics(void) {
     memcpy(combined + done_len, content, content_len);
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
     CHECK(ollama_provider_feed(&provider, combined, done_len + content_len) == -1);
     CHECK(log.count == 2);
     CHECK(log.type[0] == PROVIDER_EVENT_DONE);
@@ -229,7 +229,7 @@ static void check_terminal_semantics(void) {
     /* A clean DONE followed by later non-empty input must also fail. */
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
     CHECK(ollama_provider_feed(&provider, done, done_len) == 0);
     CHECK(log.count == 1);
     CHECK(log.type[0] == PROVIDER_EVENT_DONE);
@@ -248,7 +248,7 @@ static void check_terminal_semantics(void) {
     memcpy(combined + strlen(error), content, content_len);
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
     CHECK(ollama_provider_feed(&provider, combined, strlen(error) + content_len) == 0);
     CHECK(log.count == 1);
     CHECK(log.type[0] == PROVIDER_EVENT_ERROR);
@@ -261,7 +261,7 @@ static void check_terminal_semantics(void) {
     memcpy(combined + done_len, done, done_len);
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
     CHECK(ollama_provider_feed(&provider, combined, done_len * 2u) == -1);
     CHECK(log.count == 2);
     CHECK(log.type[0] == PROVIDER_EVENT_DONE);
@@ -285,12 +285,12 @@ static void check_null_preconditions(void) {
 
     memset(&log, 0, sizeof(log));
     ollama_provider_init(&provider, collect, &log);
-    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
 
     /* message_count > 0 with a NULL array is rejected. */
-    CHECK(ollama_provider_build_request(&provider, "m", NULL, 1, 8) == -1);
+    CHECK(ollama_provider_build_request(&provider, "m", NULL, 1, 8, "", 80) == -1);
     /* message_count == 0 with a NULL array is allowed. */
-    CHECK(ollama_provider_build_request(&provider, "m", NULL, 0, 8) == 0);
+    CHECK(ollama_provider_build_request(&provider, "m", NULL, 0, 8, "", 80) == 0);
 
     /* Reading with a non-zero capacity and a NULL destination is rejected. */
     CHECK(ollama_provider_read(&provider, 0u, NULL, 4u) == 0u);
@@ -301,6 +301,38 @@ static void check_null_preconditions(void) {
     CHECK(ollama_provider_feed(&provider, NULL, 0u) == 0);
 }
 
+static void check_system_prompt_and_temperature(void) {
+    ollama_provider_t provider;
+    event_log_t log;
+    memset(&log, 0, sizeof(log));
+    ollama_provider_init(&provider, collect, &log);
+
+    ollama_message_t one[1] = {{"user", "hi"}};
+
+    /* A system prompt is emitted as the first message. */
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "Be concise", 80) == 0);
+    CHECK_STR_EQ(provider.body,
+                 "{\"model\":\"m\",\"messages\":[{\"role\":\"system\",\"content\":\"Be concise\"},"
+                 "{\"role\":\"user\",\"content\":\"hi\"}],"
+                 "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}");
+
+    /* An empty system prompt omits the system message. */
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 80) == 0);
+    CHECK_STR_EQ(provider.body,
+                 "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                 "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}");
+
+    /* Temperature bounds emit 0.00 and 2.00. */
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 0) == 0);
+    CHECK(strstr(provider.body, "\"temperature\":0.00") != NULL);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 200) == 0);
+    CHECK(strstr(provider.body, "\"temperature\":2.00") != NULL);
+
+    /* Out-of-range temperature is rejected. */
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", -1) == -1);
+    CHECK(ollama_provider_build_request(&provider, "m", one, 1, 8, "", 201) == -1);
+}
+
 void test_ollama_provider(void) {
     check_single_message_request();
     check_escaping_and_messages();
@@ -308,4 +340,5 @@ void test_ollama_provider(void) {
     check_feed();
     check_terminal_semantics();
     check_null_preconditions();
+    check_system_prompt_and_temperature();
 }

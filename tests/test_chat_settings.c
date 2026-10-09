@@ -211,10 +211,36 @@ static void check_arguments_and_truncation(void) {
     CHECK_STR_EQ(out, "");
 }
 
+static void check_temperature(void) {
+    ai_config_t config;
+    char out[16];
+    ai_config_init(&config);
+
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "0.8") == AI_CONFIG_OK);
+    CHECK(config.temperature == 80u);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "1.5") == AI_CONFIG_OK);
+    CHECK(config.temperature == 150u);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "2") == AI_CONFIG_OK);
+    CHECK(config.temperature == 200u);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "0") == AI_CONFIG_OK);
+    CHECK(config.temperature == 0u);
+
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "2.1") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "abc") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_TEMPERATURE, "-1") == AI_CONFIG_INVALID_VALUE);
+
+    chat_settings_format(&config, CHAT_SETTING_TEMPERATURE, out, sizeof(out));
+    CHECK_STR_EQ(out, "0.00");
+    config.temperature = 80u;
+    chat_settings_format(&config, CHAT_SETTING_TEMPERATURE, out, sizeof(out));
+    CHECK_STR_EQ(out, "0.80");
+}
+
 void test_chat_settings(void) {
     check_labels();
     check_text_fields();
     check_numeric_bounds();
     check_password_is_never_shown();
     check_arguments_and_truncation();
+    check_temperature();
 }

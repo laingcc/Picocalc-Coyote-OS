@@ -1195,3 +1195,4 @@
 /build/Makefile
 /build/pico_flash_region.ld
 /build/
+/build-tests/

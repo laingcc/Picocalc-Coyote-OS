@@ -83,7 +83,9 @@ static void check_serialize_defaults(void) {
         "connect_timeout_ms=15000\n"
         "request_timeout_ms=120000\n"
         "idle_timeout_ms=15000\n"
-        "max_predict=384\n";
+        "max_predict=384\n"
+        "system_prompt=\n"
+        "temperature=80\n";
     static const char expected_with_host[] =
         "version=1\n"
         "ssid=\n"
@@ -96,7 +98,9 @@ static void check_serialize_defaults(void) {
         "connect_timeout_ms=15000\n"
         "request_timeout_ms=120000\n"
         "idle_timeout_ms=15000\n"
-        "max_predict=384\n";
+        "max_predict=384\n"
+        "system_prompt=\n"
+        "temperature=80\n";
     ai_config_t config;
     ai_config_t reloaded;
     ai_config_parser_t parser;
@@ -174,6 +178,7 @@ static void check_numeric_validation(void) {
     CHECK(parse_text(&config, &parser, "idle_timeout_ms=120001\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
     CHECK(parse_text(&config, &parser, "max_predict=0\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
     CHECK(parse_text(&config, &parser, "max_predict=4097\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
+    CHECK(parse_text(&config, &parser, "temperature=201\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
 
     CHECK(parse_text(&config, &parser,
                      "port=1\nconnect_timeout_ms=100\nrequest_timeout_ms=1000\n"
@@ -263,6 +268,25 @@ static void check_null_safety(void) {
     CHECK(ai_config_parser_feed(&parser, "x", 1u) == AI_CONFIG_INVALID_ARGUMENT);
 }
 
+static void check_system_prompt_and_temperature(void) {
+    ai_config_t config;
+    ai_config_t reloaded;
+    ai_config_parser_t parser;
+    char output[512];
+    size_t length = 0u;
+
+    CHECK(ai_config_init(&config) == AI_CONFIG_OK);
+    CHECK(config.temperature == 80u);
+    CHECK(config.system_prompt[0] == '\0');
+
+    memcpy(config.system_prompt, "be brief", sizeof("be brief"));
+    config.temperature = 150u;
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_OK);
+    CHECK(parse_text(&reloaded, &parser, output, 99u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.system_prompt, "be brief");
+    CHECK(reloaded.temperature == 150u);
+}
+
 void test_ai_config(void) {
     check_defaults();
     check_incremental_parse();
@@ -273,4 +297,5 @@ void test_ai_config(void) {
     check_bounded_input();
     check_serializer_bounds_and_round_trip();
     check_null_safety();
+    check_system_prompt_and_temperature();
 }
