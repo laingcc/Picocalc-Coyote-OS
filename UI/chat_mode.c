@@ -420,16 +420,9 @@ static void make_auto_title(const char *src, size_t src_len, char *dst, size_t d
     }
 }
 
-static void save_chat_action(void) {
-    if (chat_model_is_streaming(&chat)) {
-        set_note("busy: Esc cancels");
-        return;
-    }
+/* The title a chat is saved and exported under: its first user message. */
+static void current_title(char *title, size_t capacity) {
     size_t count = chat_model_message_count(&chat);
-    if (count == 0u) {
-        set_note("nothing to save");
-        return;
-    }
     const chat_message_t *first_user = NULL;
     for (size_t i = 0u; i < count; i++) {
         const chat_message_t *m = chat_model_message_at(&chat, i);
@@ -438,17 +431,50 @@ static void save_chat_action(void) {
             break;
         }
     }
-    char auto_title[CONV_STORE_TITLE_MAX + 1u];
     if (first_user != NULL && first_user->length > 0u) {
-        make_auto_title(first_user->text, first_user->length, auto_title, sizeof(auto_title));
+        make_auto_title(first_user->text, first_user->length, title, capacity);
     } else {
-        snprintf(auto_title, sizeof(auto_title), "chat");
+        snprintf(title, capacity, "chat");
     }
+}
+
+static void save_chat_action(void) {
+    if (chat_model_is_streaming(&chat)) {
+        set_note("busy: Esc cancels");
+        return;
+    }
+    if (chat_model_message_count(&chat) == 0u) {
+        set_note("nothing to save");
+        return;
+    }
+    char auto_title[CONV_STORE_TITLE_MAX + 1u];
+    current_title(auto_title, sizeof(auto_title));
     conv_store_status_t st = conv_store_save(&chat, auto_title, CONFIG_DIR);
     if (st == CONV_STORE_OK) {
         set_note("saved");
     } else {
         set_note("save failed");
+    }
+}
+
+static void export_chat_action(void) {
+    if (chat_model_is_streaming(&chat)) {
+        set_note("busy: Esc cancels");
+        return;
+    }
+    if (chat_model_message_count(&chat) == 0u) {
+        set_note("nothing to export");
+        return;
+    }
+    char auto_title[CONV_STORE_TITLE_MAX + 1u];
+    char path[CONV_STORE_PATH_CAPACITY];
+    current_title(auto_title, sizeof(auto_title));
+    if (conv_store_export_path(auto_title, CONFIG_DIR, path, sizeof(path)) == CONV_STORE_OK &&
+        conv_store_export(&chat, auto_title, path, NULL) == CONV_STORE_OK) {
+        /* Name the file (as much of it as the status line holds) so it can be found. */
+        snprintf(note, sizeof(note), "wrote %s", path + sizeof(CONFIG_DIR));
+    } else {
+        set_note("export failed");
     }
 }
 
@@ -500,8 +526,8 @@ static void delete_chat_action(void) {
 }
 
 static bool conversations_menu(void) {
-    static const char *const choices[] = {" Save chat ", " Open saved ", " Delete saved "};
-    int sel = menu(" CONVERSATIONS ", choices, 3, 0);
+    static const char *const choices[] = {" Save chat ", " Open saved ", " Delete saved ", " Export to SD "};
+    int sel = menu(" CONVERSATIONS ", choices, 4, 0);
     if (sel < 0) {
         return false;
     }
@@ -511,6 +537,8 @@ static bool conversations_menu(void) {
         open_chat_action();
     } else if (sel == 2) {
         delete_chat_action();
+    } else if (sel == 3) {
+        export_chat_action();
     }
     return true;
 }

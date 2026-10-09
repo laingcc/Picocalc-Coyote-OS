@@ -602,6 +602,205 @@ static void check_stale_backup_removed(void) {
     CHECK(!exists(CONV_STORE_BACKUP_NAME));
 }
 
+/* ---- export ---------------------------------------------------------------- */
+
+#define EXPORT_FILE "./Export_me.txt"
+
+static void clean_export(void) {
+    clean();
+    remove(EXPORT_FILE);
+    remove(EXPORT_FILE ".tmp");
+    remove(EXPORT_FILE ".bak");
+}
+
+static void check_export_path(void) {
+    char path[CONV_STORE_PATH_CAPACITY];
+    char small[12];
+
+    CHECK(conv_store_export_path(NULL, test_dir, path, sizeof(path)) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export_path("t", NULL, path, sizeof(path)) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export_path("t", test_dir, NULL, 0u) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export_path("", test_dir, path, sizeof(path)) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export_path("bad\ntitle", test_dir, path, sizeof(path)) == CONV_STORE_INVALID_ARGUMENT);
+
+    CHECK(conv_store_export_path("Export me", test_dir, path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, EXPORT_FILE);
+    CHECK(conv_store_export_path("  Hello,  World! / ..\\x?", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/Hello_World_x.txt");
+    CHECK(conv_store_export_path("re-do #2", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/re-do_2.txt");
+    CHECK(conv_store_export_path("caf\xc3\xa9 au lait", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/caf_au_lait.txt");
+
+    /* Nothing usable in the title falls back to a fixed name. */
+    CHECK(conv_store_export_path("?? ../ ??", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/chat.txt");
+
+    /* An export must never land on the conversation store itself. */
+    CHECK(conv_store_export_path("convs", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/convs_.txt");
+    CHECK(conv_store_export_path("Convs!", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/Convs_.txt");
+
+    /* The stem is cut to CONV_STORE_EXPORT_NAME_MAX, without a trailing '_'. */
+    CHECK(conv_store_export_path("0123456789012345678901234567890123456789", "/coyote", path, sizeof(path)) ==
+          CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/01234567890123456789012345678901.txt");
+    CHECK(conv_store_export_path("0123456789012345678901234567890 tail", "/coyote", path, sizeof(path)) ==
+          CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/0123456789012345678901234567890.txt");
+
+    /* "/coyote/abc.txt" needs 16 bytes with its NUL. */
+    CHECK(conv_store_export_path("abc", "/coyote", small, sizeof(small)) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export_path("abc", "/coyote", path, 15u) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export_path("abc", "/coyote", path, 16u) == CONV_STORE_OK);
+    CHECK_STR_EQ(path, "/coyote/abc.txt");
+}
+
+static void check_export_arguments(void) {
+    chat_model_t m;
+    char long_path[CONV_STORE_PATH_CAPACITY + 8u];
+    size_t written = 99u;
+
+    clean_export();
+    chat_model_init(&m, NULL, NULL, 0u);
+
+    CHECK(conv_store_export(&m, "Export me", EXPORT_FILE, &written) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(written == 0u);
+    CHECK(!exists(EXPORT_FILE));
+
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "hi", 2u) == 0);
+    CHECK(conv_store_export(NULL, "Export me", EXPORT_FILE, NULL) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export(&m, NULL, EXPORT_FILE, NULL) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export(&m, "Export me", NULL, NULL) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export(&m, "Export me", "", NULL) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(conv_store_export(&m, "bad\ntitle", EXPORT_FILE, NULL) == CONV_STORE_INVALID_ARGUMENT);
+
+    /* The path must leave room for the ".tmp" used during the swap. */
+    memset(long_path, 'p', sizeof(long_path));
+    long_path[CONV_STORE_PATH_CAPACITY - 4u] = '\0';
+    CHECK(conv_store_export(&m, "Export me", long_path, NULL) == CONV_STORE_INVALID_ARGUMENT);
+    CHECK(!exists(EXPORT_FILE));
+
+    /* A directory that does not exist is an I/O failure. */
+    written = 99u;
+    CHECK(conv_store_export(&m, "Export me", "./no-such-dir/x.txt", &written) == CONV_STORE_IO_ERROR);
+    CHECK(written == 0u);
+}
+
+static void check_export_round_trip(void) {
+    chat_model_t m;
+    chat_model_t loaded;
+    char path[CONV_STORE_PATH_CAPACITY];
+    size_t written = 0u;
+    /* Lines the store has to escape: markers and leading backslashes. */
+    static const char tricky[] = "first line\n[message]\n\\backslash\n[conversation]\n\\\\double\n\nrole=user\ntext=x";
+    static const char reply[] = "Sure:\n\\[x^2\\]\n[done]";
+    static const char expected[] =
+        "# Export me\n"
+        "\n"
+        "user: hello\n"
+        "assistant: hi there\n"
+        "user: first line\n[message]\n\\backslash\n[conversation]\n\\\\double\n\nrole=user\ntext=x\n"
+        "assistant: Sure:\n\\[x^2\\]\n[done]\n";
+
+    clean_export();
+    chat_model_init(&m, NULL, NULL, 0u);
+    chat_model_init(&loaded, NULL, NULL, 0u);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "hello", 5u) == 0);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_ASSISTANT, "hi there", 8u) == 0);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, tricky, sizeof(tricky) - 1u) == 0);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_ASSISTANT, reply, sizeof(reply) - 1u) == 0);
+
+    /* Through the store and back, so the export proves the text is un-escaped. */
+    CHECK(conv_store_save(&m, "Export me", test_dir) == CONV_STORE_OK);
+    CHECK(strstr(read_raw_file(CONV_STORE_FILE_NAME), "\n\\[message]\n") != NULL);
+    CHECK(conv_store_load(&loaded, "Export me", test_dir) == CONV_STORE_OK);
+
+    CHECK(conv_store_export_path("Export me", test_dir, path, sizeof(path)) == CONV_STORE_OK);
+    CHECK(conv_store_export(&loaded, "Export me", path, &written) == CONV_STORE_OK);
+    CHECK_STR_EQ(read_raw_file(EXPORT_FILE), expected);
+    CHECK(written == sizeof(expected) - 1u);
+    CHECK(!exists(EXPORT_FILE ".tmp"));
+    CHECK(!exists(EXPORT_FILE ".bak"));
+
+    /* Exporting leaves the store as it was. */
+    CHECK(conv_store_load(&loaded, "Export me", test_dir) == CONV_STORE_OK);
+    CHECK(chat_model_message_count(&loaded) == 4u);
+    CHECK_STR_EQ(chat_model_message_at(&loaded, 2u)->text, tricky);
+}
+
+static void check_export_sanitizes_text(void) {
+    chat_model_t m;
+    static const char dirty[] = "\x1b[31mred\x1b[0m\r\nbell\a tab\there\x7f nul\0gone\r";
+
+    clean_export();
+    chat_model_init(&m, NULL, NULL, 0u);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, dirty, sizeof(dirty) - 1u) == 0);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_ASSISTANT, "", 0u) == 0);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "caf\xc3\xa9", 5u) == 0);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_ASSISTANT, "cut sh", 6u) == 0);
+    m.messages[3].partial = true;
+
+    CHECK(conv_store_export(&m, "Export me", EXPORT_FILE, NULL) == CONV_STORE_OK);
+    CHECK_STR_EQ(read_raw_file(EXPORT_FILE),
+                 "# Export me\n"
+                 "\n"
+                 "user: [31mred[0m\nbell tab\there nulgone\n"
+                 "assistant: \n"
+                 "user: caf\xc3\xa9\n"
+                 "assistant (incomplete): cut sh\n");
+}
+
+static void check_export_replaces_existing(void) {
+    chat_model_t m;
+    size_t written = 0u;
+
+    clean_export();
+    chat_model_init(&m, NULL, NULL, 0u);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "a much longer first version", 27u) == 0);
+    CHECK(conv_store_export(&m, "Export me", EXPORT_FILE, NULL) == CONV_STORE_OK);
+
+    /* FAT will not rename over the earlier export; it is stepped aside. */
+    chat_model_reset(&m);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "v2", 2u) == 0);
+    rename_like_fat = 1;
+    CHECK(conv_store_export(&m, "Export me", EXPORT_FILE, &written) == CONV_STORE_OK);
+    CHECK_STR_EQ(read_raw_file(EXPORT_FILE), "# Export me\n\nuser: v2\n");
+    CHECK(written == strlen("# Export me\n\nuser: v2\n"));
+    CHECK(!exists(EXPORT_FILE ".tmp"));
+    CHECK(!exists(EXPORT_FILE ".bak"));
+
+    /* A failed swap keeps the earlier export and leaves no temp file. */
+    chat_model_reset(&m);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "v3", 2u) == 0);
+    reset_rename();
+    rename_fail_all = 1;
+    written = 99u;
+    CHECK(conv_store_export(&m, "Export me", EXPORT_FILE, &written) == CONV_STORE_IO_ERROR);
+    CHECK(written == 0u);
+    CHECK_STR_EQ(read_raw_file(EXPORT_FILE), "# Export me\n\nuser: v2\n");
+    CHECK(!exists(EXPORT_FILE ".tmp"));
+}
+
+static void check_export_does_not_disturb_store(void) {
+    chat_model_t m;
+    chat_model_t loaded;
+
+    clean_export();
+    chat_model_init(&m, NULL, NULL, 0u);
+    chat_model_init(&loaded, NULL, NULL, 0u);
+    CHECK(chat_model_append_message(&m, CHAT_ROLE_USER, "kept", 4u) == 0);
+    CHECK(conv_store_save(&m, "Kept", test_dir) == CONV_STORE_OK);
+
+    /* The export reuses the store's path scratch; later calls must re-aim it. */
+    CHECK(conv_store_export(&m, "Export me", EXPORT_FILE, NULL) == CONV_STORE_OK);
+    CHECK(conv_store_save(&m, "Second", test_dir) == CONV_STORE_OK);
+    CHECK(conv_store_load(&loaded, "Kept", test_dir) == CONV_STORE_OK);
+    CHECK_STR_EQ(chat_model_message_at(&loaded, 0u)->text, "kept");
+    CHECK_STR_EQ(read_raw_file(EXPORT_FILE), "# Export me\n\nuser: kept\n");
+}
+
 void test_conv_store(void) {
     check_arguments();
     check_empty_transcript_save_rejected();
@@ -621,5 +820,11 @@ void test_conv_store(void) {
     check_title_control_chars_rejected();
     check_message_count_too_large();
     check_stale_backup_removed();
-    clean();
+    check_export_path();
+    check_export_arguments();
+    check_export_round_trip();
+    check_export_sanitizes_text();
+    check_export_replaces_existing();
+    check_export_does_not_disturb_store();
+    clean_export();
 }
