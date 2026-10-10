@@ -359,6 +359,15 @@ static void ssid_menu(ai_config_t *target) {
     else if (sel == 1) edit_setting(target, CHAT_SETTING_SSID);
 }
 
+static void provider_menu(void) {
+    static const char *const providers[] = {" ollama ", " deepseek "};
+    int sel = menu(" PROVIDER ", providers, 2, 0);
+    if (sel < 0) return;
+    const char *choice = (sel == 0) ? "ollama" : "deepseek";
+    if (strcmp(config.provider, choice) == 0) return;
+    if (chat_settings_set(&config, CHAT_SETTING_PROVIDER, choice) == AI_CONFIG_OK) apply_config();
+}
+
 static void settings_menu(void) {
     const char *labels[CHAT_SETTING_COUNT + 1];
     int sel = 0;
@@ -378,15 +387,6 @@ static void settings_menu(void) {
         else edit_setting(&draft, (chat_setting_t)sel);
     }
     memset(&draft, 0, sizeof(draft));
-}
-
-static void provider_menu(void) {
-    static const char *const providers[] = {" ollama ", " deepseek "};
-    int sel = menu(" PROVIDER ", providers, 2, 0);
-    if (sel < 0) return;
-    const char *choice = (sel == 0) ? "ollama" : "deepseek";
-    if (strcmp(config.provider, choice) == 0) return;
-    if (chat_settings_set(&config, CHAT_SETTING_PROVIDER, choice) == AI_CONFIG_OK) apply_config();
 }
 
 static void chat_menu(void) {

@@ -182,6 +182,39 @@ static void check_feed(void) {
     CHECK(deepseek_provider_feed(&provider, error, strlen(error)) == -1);
 }
 
+static void check_finish_reason_followed_by_sse_done(void) {
+    deepseek_provider_t provider;
+    event_log_t log;
+    deepseek_message_t one[1] = {{"user", "hi"}};
+
+    memset(&log, 0, sizeof(log));
+    deepseek_provider_init(&provider, collect, &log);
+    CHECK(deepseek_provider_build_request(&provider, "m", one, 1, 8, NULL, 80) == 0);
+
+    /* Real DeepSeek stream sending finish_reason: "stop" followed by data: [DONE] */
+    const char *chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n";
+    const char *chunk2 = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n";
+    const char *chunk3 = "data: [DONE]\n";
+
+    CHECK(deepseek_provider_feed(&provider, chunk1, strlen(chunk1)) == 0);
+    CHECK(log.count == 1);
+    CHECK(log.type[0] == PROVIDER_EVENT_CONTENT);
+    CHECK_STR_EQ(log.data[0], "Hello");
+
+    CHECK(deepseek_provider_feed(&provider, chunk2, strlen(chunk2)) == 0);
+    CHECK(log.count == 2);
+    CHECK(log.type[1] == PROVIDER_EVENT_DONE);
+    CHECK(deepseek_provider_is_done(&provider));
+
+    /* Chunk 3 sending data: [DONE] after done is harmlessly consumed */
+    CHECK(deepseek_provider_feed(&provider, chunk3, strlen(chunk3)) == 0);
+    CHECK(log.count == 2); /* no extra event */
+    CHECK(deepseek_provider_is_done(&provider));
+    CHECK(deepseek_provider_failed(&provider) == false);
+
+    CHECK(deepseek_provider_finish(&provider) == 0);
+}
+
 static void check_terminal_semantics(void) {
     deepseek_provider_t provider;
     event_log_t log;
@@ -261,6 +294,7 @@ void test_deepseek_provider(void) {
     check_escaping_and_messages();
     check_rejections();
     check_feed();
+    check_finish_reason_followed_by_sse_done();
     check_terminal_semantics();
     check_null_preconditions();
 }

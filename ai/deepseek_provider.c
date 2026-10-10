@@ -244,6 +244,24 @@ provider_request_t deepseek_provider_request(deepseek_provider_t *provider) {
     return request;
 }
 
+static bool is_sse_done_line(const char *line) {
+    const char *p = line;
+    while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+    if (strncmp(p, "data:", 5) == 0) {
+        p += 5;
+        while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+    }
+    size_t plen = strlen(p);
+    while (plen > 0 && (p[plen - 1] == '\r' || p[plen - 1] == ' ' || p[plen - 1] == '\t')) plen--;
+    return plen == 6 && strncmp(p, "[DONE]", 6) == 0;
+}
+
+static bool is_whitespace_line(const char *line) {
+    const char *p = line;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    return *p == '\0';
+}
+
 static int process_line(deepseek_provider_t *provider) {
     const char *p = provider->line;
     while (*p == ' ' || *p == '\t' || *p == '\r') p++;
@@ -255,14 +273,6 @@ static int process_line(deepseek_provider_t *provider) {
     while (plen > 0 && (p[plen - 1] == '\r' || p[plen - 1] == ' ' || p[plen - 1] == '\t')) plen--;
 
     if (plen == 0) {
-        return 0;
-    }
-    if (plen == 6 && strncmp(p, "[DONE]", 6) == 0) {
-        provider->done = true;
-        provider_event_t event = {PROVIDER_EVENT_DONE, NULL, 0u};
-        if (provider->callback != NULL) {
-            provider->callback(provider->callback_context, &event);
-        }
         return 0;
     }
     if (*p == '{') {
@@ -284,28 +294,9 @@ int deepseek_provider_feed(deepseek_provider_t *provider, const char *data, size
     if (!provider->built || provider->failed) {
         return -1;
     }
-    if (provider->done) {
-        if (length == 0u) {
-            return 0;
-        }
-        provider->failed = true;
-        provider_event_t event = {PROVIDER_EVENT_ERROR, "data after done", 15u};
-        if (provider->callback != NULL) {
-            provider->callback(provider->callback_context, &event);
-        }
-        return -1;
-    }
 
     for (size_t i = 0; i < length; i++) {
         char c = data[i];
-        if (provider->done) {
-            provider->failed = true;
-            provider_event_t event = {PROVIDER_EVENT_ERROR, "data after done", 15u};
-            if (provider->callback != NULL) {
-                provider->callback(provider->callback_context, &event);
-            }
-            return -1;
-        }
         if (c == '\n') {
             if (provider->overflow) {
                 provider->failed = true;
@@ -316,15 +307,37 @@ int deepseek_provider_feed(deepseek_provider_t *provider, const char *data, size
                 return -1;
             }
             provider->line[provider->line_length] = '\0';
-            int rc = process_line(provider);
-            provider->line_length = 0u;
-            provider->overflow = false;
-            if (rc != 0 || provider->failed) {
-                if (i + 1u < length) {
+            if (is_sse_done_line(provider->line)) {
+                if (!provider->done) {
+                    provider->done = true;
+                    provider_event_t event = {PROVIDER_EVENT_DONE, NULL, 0u};
+                    if (provider->callback != NULL) {
+                        provider->callback(provider->callback_context, &event);
+                    }
+                }
+            } else if (!is_whitespace_line(provider->line)) {
+                if (provider->done) {
+                    provider->failed = true;
+                    provider_event_t event = {PROVIDER_EVENT_ERROR, "data after done", 15u};
+                    if (provider->callback != NULL) {
+                        provider->callback(provider->callback_context, &event);
+                    }
+                    provider->line_length = 0u;
+                    provider->overflow = false;
                     return -1;
                 }
-                return provider->failed ? 0 : -1;
+                int rc = process_line(provider);
+                if (rc != 0 || provider->failed) {
+                    provider->line_length = 0u;
+                    provider->overflow = false;
+                    if (i + 1u < length) {
+                        return -1;
+                    }
+                    return provider->failed ? 0 : -1;
+                }
             }
+            provider->line_length = 0u;
+            provider->overflow = false;
         } else if (provider->line_length < DEEPSEEK_RECORD_MAX) {
             provider->line[provider->line_length++] = c;
         } else {
@@ -347,7 +360,19 @@ int deepseek_provider_finish(deepseek_provider_t *provider) {
             return -1;
         }
         provider->line[provider->line_length] = '\0';
-        process_line(provider);
+        if (is_sse_done_line(provider->line)) {
+            if (!provider->done) {
+                provider->done = true;
+                provider_event_t event = {PROVIDER_EVENT_DONE, NULL, 0u};
+                if (provider->callback != NULL) {
+                    provider->callback(provider->callback_context, &event);
+                }
+            }
+        } else if (!is_whitespace_line(provider->line)) {
+            if (!provider->done) {
+                process_line(provider);
+            }
+        }
         provider->line_length = 0u;
     }
     if (provider->failed) {
