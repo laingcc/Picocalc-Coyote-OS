@@ -52,6 +52,7 @@ void test_ai_config(void);
 void test_config_store(void);
 void test_conv_store(void);
 void test_http_stream(void);
+void test_screenshot(void);
 void test_wifi_scan(void);
 
 int main(void) {
@@ -66,6 +67,7 @@ int main(void) {
     test_config_store();
     test_conv_store();
     test_http_stream();
+    test_screenshot();
     test_wifi_scan();
 
     printf("%d checks, %d failures\n", g_tests_run, g_tests_failed);

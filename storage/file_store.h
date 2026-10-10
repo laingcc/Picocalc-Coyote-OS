@@ -1,5 +1,5 @@
-#ifndef COYOTE_AI_FILE_STORE_H
-#define COYOTE_AI_FILE_STORE_H
+#ifndef COYOTE_STORAGE_FILE_STORE_H
+#define COYOTE_STORAGE_FILE_STORE_H
 
 #include <stddef.h>
 #include <stdio.h>

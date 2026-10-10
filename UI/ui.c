@@ -273,6 +273,12 @@ void ui_redraw_tab_content() {
     }
 }
 
+static void redraw_current_mode(void) {
+    if (current_mode == MODE_CALCULATOR) ui_redraw_tab_content();
+    else if (current_mode == MODE_CHAT) chat_mode_redraw();
+    else text_mode_redraw();
+}
+
 void ui_show_mode_menu() {
     MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}};
     int sel = run_menu(MENU_X, MENU_Y, MENU_W, MENU_H, " MODE ", items, 3,
@@ -280,9 +286,14 @@ void ui_show_mode_menu() {
     if (sel == 0) ui_set_current_mode(MODE_TEXT);
     else if (sel == 1) ui_set_current_mode(MODE_CALCULATOR);
     else if (sel == 2) ui_set_current_mode(MODE_CHAT);
-    else if (current_mode == MODE_CALCULATOR) ui_redraw_tab_content();
-    else if (current_mode == MODE_CHAT) chat_mode_redraw();
-    else text_mode_redraw();
+    else redraw_current_mode();
+}
+
+void ui_show_notice(const char* text) {
+    draw_menu_frame(MENU_X, MENU_Y, MENU_W, 3, "");
+    draw_menu_opt(MENU_X, MENU_Y, MENU_W, 1, text, false);
+    for (int i = 0; i < 40; i++) { ui_idle(); sleep_ms(20); }
+    redraw_current_mode();
 }
 
 void ui_show_menu() {

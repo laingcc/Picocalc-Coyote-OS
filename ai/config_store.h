@@ -2,7 +2,7 @@
 #define COYOTE_AI_CONFIG_STORE_H
 
 #include "ai/ai_config.h"
-#include "ai/file_store.h"
+#include "storage/file_store.h"
 
 /*
  * Persistence of the AI configuration as <dir>/ai.ini.

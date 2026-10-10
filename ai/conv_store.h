@@ -3,7 +3,8 @@
 
 #include <stddef.h>
 #include "ai/chat_model.h"
-#include "ai/file_store.h"
+#include "storage/export.h"
+#include "storage/file_store.h"
 
 /*
  * Persistence of AI chat conversations as <dir>/convs.txt.
@@ -30,7 +31,7 @@
 #define CONV_STORE_PATH_CAPACITY FILE_STORE_PATH_CAPACITY
 
 /* Longest export file name stem built from a title, before ".txt". */
-#define CONV_STORE_EXPORT_NAME_MAX 32u
+#define CONV_STORE_EXPORT_NAME_MAX EXPORT_NAME_MAX
 
 typedef enum {
     CONV_STORE_OK = 0,
