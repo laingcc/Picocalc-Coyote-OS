@@ -37,6 +37,7 @@ static void check_defaults(void) {
     CHECK(config.request_timeout_ms == 120000u);
     CHECK(config.idle_timeout_ms == 15000u);
     CHECK(config.max_predict == 384u);
+    CHECK(config.utc_offset_minutes == 0);
 }
 
 static void check_incremental_parse(void) {
@@ -85,7 +86,8 @@ static void check_serialize_defaults(void) {
         "idle_timeout_ms=15000\n"
         "max_predict=384\n"
         "system_prompt=" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\n"
-        "temperature=80\n";
+        "temperature=80\n"
+        "utc_offset_minutes=0\n";
     static const char expected_with_host[] =
         "version=1\n"
         "ssid=\n"
@@ -100,7 +102,8 @@ static void check_serialize_defaults(void) {
         "idle_timeout_ms=15000\n"
         "max_predict=384\n"
         "system_prompt=" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\n"
-        "temperature=80\n";
+        "temperature=80\n"
+        "utc_offset_minutes=0\n";
     ai_config_t config;
     ai_config_t reloaded;
     ai_config_parser_t parser;
@@ -287,6 +290,66 @@ static void check_system_prompt_and_temperature(void) {
     CHECK(reloaded.temperature == 150u);
 }
 
+static void check_utc_offset(void) {
+    ai_config_t config;
+    ai_config_t reloaded;
+    ai_config_parser_t parser;
+    char output[512];
+    size_t length = 0u;
+
+    /* Signed, with an optional '+', inclusive of both bounds. */
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=-300\n", 5u) == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == -300);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=+330\n", 5u) == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == 330);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=-720\n", 99u) == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == AI_CONFIG_UTC_OFFSET_MINUTES_MIN);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=840\n", 99u) == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == AI_CONFIG_UTC_OFFSET_MINUTES_MAX);
+
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=-721\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "utc_offset_minutes");
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=841\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
+    /* Within the magnitude of one bound but past the other. */
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=-840\n", 99u) == AI_CONFIG_OUT_OF_RANGE);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=99999999999\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=-\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=--5\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=5.5\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "utc_offset_minutes=60\nutc_offset_minutes=60\n", 99u) ==
+          AI_CONFIG_DUPLICATE_KEY);
+
+    /* Both signs survive a save and reload. */
+    ai_config_init(&config);
+    config.utc_offset_minutes = -300;
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_OK);
+    CHECK(length == strlen(output));
+    CHECK(strstr(output, "\nutc_offset_minutes=-300\n") != NULL);
+    CHECK(parse_text(&reloaded, &parser, output, 7u) == AI_CONFIG_OK);
+    CHECK(reloaded.utc_offset_minutes == -300);
+
+    config.utc_offset_minutes = 330;
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_OK);
+    CHECK(length == strlen(output));
+    CHECK(strstr(output, "\nutc_offset_minutes=330\n") != NULL);
+    CHECK(parse_text(&reloaded, &parser, output, 7u) == AI_CONFIG_OK);
+    CHECK(reloaded.utc_offset_minutes == 330);
+
+    /* The exact size is still demanded with a sign in the output. */
+    config.utc_offset_minutes = -720;
+    CHECK(ai_config_serialize(&config, NULL, 0u, &length) == AI_CONFIG_NO_SPACE);
+    CHECK(ai_config_serialize(&config, output, length, &length) == AI_CONFIG_NO_SPACE);
+    CHECK(ai_config_serialize(&config, output, length + 1u, &length) == AI_CONFIG_OK);
+    CHECK(length == strlen(output));
+
+    /* An offset outside the range is never written. */
+    config.utc_offset_minutes = -721;
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_INVALID_VALUE);
+    config.utc_offset_minutes = 841;
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_INVALID_VALUE);
+}
+
 void test_ai_config(void) {
     check_defaults();
     check_incremental_parse();
@@ -296,6 +359,7 @@ void test_ai_config(void) {
     check_numeric_validation();
     check_bounded_input();
     check_serializer_bounds_and_round_trip();
+    check_utc_offset();
     check_null_safety();
     check_system_prompt_and_temperature();
 }

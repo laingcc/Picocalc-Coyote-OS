@@ -31,6 +31,9 @@
 #define AI_CONFIG_TEMPERATURE_DEFAULT 80u
 #define AI_CONFIG_DEFAULT_SYSTEM_PROMPT \
     "You are an AI on a Picocalc handheld with a tiny screen and keyboard. Be concise; avoid markdown and long code."
+/* UTC-12:00 to UTC+14:00, the span of offsets in civil use. */
+#define AI_CONFIG_UTC_OFFSET_MINUTES_MIN (-720)
+#define AI_CONFIG_UTC_OFFSET_MINUTES_MAX 840
 
 typedef enum {
     AI_CONFIG_OK = 0,
@@ -62,6 +65,7 @@ typedef struct {
     uint32_t max_predict;
     char system_prompt[AI_CONFIG_SYSTEM_PROMPT_CAPACITY];
     uint16_t temperature;
+    int16_t utc_offset_minutes; /* local time is UTC plus this */
 } ai_config_t;
 
 typedef struct {
