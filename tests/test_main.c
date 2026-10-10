@@ -52,6 +52,7 @@ void test_ai_config(void);
 void test_config_store(void);
 void test_conv_store(void);
 void test_http_stream(void);
+void test_screenshot(void);
 void test_wifi_scan(void);
 void test_time_sync(void);
 void test_mode_menu(void);
@@ -68,6 +69,7 @@ int main(void) {
     test_config_store();
     test_conv_store();
     test_http_stream();
+    test_screenshot();
     test_wifi_scan();
     test_time_sync();
     test_mode_menu();

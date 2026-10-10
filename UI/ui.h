@@ -48,6 +48,8 @@ void ui_redraw_input_only();
 void ui_show_menu();
 void ui_show_mode_menu();
 void ui_show_graph_menu();
+/* Show a one-line notice (up to 20 characters) briefly, then redraw the mode. */
+void ui_show_notice(const char* text);
 bool ui_show_file_menu(const char* directory, char* out_filename, int max_len);
 bool ui_show_save_prompt(char* out_filename, int max_len);
 /* Modal text prompt; false if cancelled, leaving out untouched. */

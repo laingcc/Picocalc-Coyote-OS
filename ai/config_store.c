@@ -1,6 +1,6 @@
 #include "ai/config_store.h"
 
-#include "ai/file_store.h"
+#include "storage/file_store.h"
 
 #include <stdio.h>
 #include <string.h>
