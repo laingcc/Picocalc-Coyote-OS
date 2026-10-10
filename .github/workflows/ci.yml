@@ -14,6 +14,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # UI-level host tests link tinyexpr, which is a repository submodule.
+          submodules: recursive
 
       - name: Install build tools
         run: |
