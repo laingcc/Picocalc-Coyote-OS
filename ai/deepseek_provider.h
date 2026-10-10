@@ -10,9 +10,9 @@
 /*
  * DeepSeek / OpenAI-compatible /chat/completions streaming provider.
  *
- * deepseek_provider_build_request serialises model, messages, stream and
- * max_tokens into a fixed-capacity buffer. The buffer is exposed through
- * provider_request_t for offset-based reading.
+ * deepseek_provider_build_request serialises model, messages, stream,
+ * max_tokens, system_prompt and temperature into a fixed-capacity buffer.
+ * The buffer is exposed through provider_request_t for offset-based reading.
  * Response bytes (SSE formatted lines `data: {...}`) are fed to
  * deepseek_provider_feed and translated into provider events.
  */
@@ -61,7 +61,9 @@ int deepseek_provider_build_request(deepseek_provider_t *provider,
                                     const char *model,
                                     const deepseek_message_t *messages,
                                     size_t message_count,
-                                    int max_tokens);
+                                    int max_tokens,
+                                    const char *system_prompt,
+                                    int temperature);
 
 /* Measured length, in bytes, of the built request body. */
 size_t deepseek_provider_request_length(const deepseek_provider_t *provider);

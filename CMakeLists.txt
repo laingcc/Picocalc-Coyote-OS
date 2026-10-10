@@ -114,6 +114,10 @@ if (TARGET pico_cyw43_arch_lwip_poll)
  * multicast DNS queries. */
 #define LWIP_DNS_SUPPORT_MDNS_QUERIES 1
 
+#define LWIP_ALTCP                  1
+#define LWIP_ALTCP_TLS              1
+#define LWIP_ALTCP_TLS_MBEDTLS      1
+
 #define TCP_MSS                     1460
 #define TCP_WND                     (4 * TCP_MSS)
 #define TCP_SND_BUF                 (2 * TCP_MSS)
@@ -140,7 +144,7 @@ if (TARGET pico_cyw43_arch_lwip_poll)
     configure_file(${COYOTE_GENERATED_DIR}/lwipopts.h.in ${COYOTE_GENERATED_DIR}/lwipopts.h COPYONLY)
     target_include_directories(coyote PRIVATE ${COYOTE_GENERATED_DIR})
     target_compile_definitions(coyote PRIVATE COYOTE_HAS_WIFI=1)
-    target_link_libraries(coyote PRIVATE pico_cyw43_arch_lwip_poll)
+    target_link_libraries(coyote PRIVATE pico_cyw43_arch_lwip_poll pico_lwip_mbedtls)
 else()
     message(WARNING "PICO_BOARD has no CYW43 radio: building without Wi-Fi (use -DPICO_BOARD=pico2_w)")
 endif()

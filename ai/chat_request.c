@@ -74,14 +74,16 @@ size_t chat_request_measure(void *context,
         }
         deepseek_provider_init(&measure->scratch.deepseek, NULL, NULL);
         if (deepseek_provider_build_request(&measure->scratch.deepseek, measure->config->model, deepseek_converted, count,
-                                            (int)measure->config->max_predict) != 0) {
+                                            (int)measure->config->max_predict, measure->config->system_prompt,
+                                            (int)measure->config->temperature) != 0) {
             return CHAT_REQUEST_UNMEASURABLE;
         }
         return deepseek_provider_request_length(&measure->scratch.deepseek);
     } else {
         ollama_provider_init(&measure->scratch.ollama, NULL, NULL);
         if (ollama_provider_build_request(&measure->scratch.ollama, measure->config->model, converted, count,
-                                          (int)measure->config->max_predict) != 0) {
+                                          (int)measure->config->max_predict, measure->config->system_prompt,
+                                          (int)measure->config->temperature) != 0) {
             return CHAT_REQUEST_UNMEASURABLE;
         }
         return ollama_provider_request_length(&measure->scratch.ollama);

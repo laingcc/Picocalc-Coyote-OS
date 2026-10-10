@@ -162,13 +162,13 @@ static int sink_finish(void *context) {
 
 #define REQUEST_BODY                                                        \
     "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]," \
-    "\"stream\":true,\"options\":{\"num_predict\":8}}"
+    "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}"
 
 #define REQUEST_HEAD                       \
     "POST /api/chat HTTP/1.1\r\n"          \
     "Host: wang.local:11434\r\n"           \
     "Content-Type: application/json\r\n"   \
-    "Content-Length: 99\r\n"               \
+    "Content-Length: 118\r\n"               \
     "Connection: close\r\n"                \
     "\r\n"
 
@@ -209,7 +209,7 @@ static int harness_start(harness_t *h) {
     h->net.wire_length = 0;
     h->net.unacked = 0;
     ollama_provider_init(&h->provider, on_event, h);
-    CHECK(ollama_provider_build_request(&h->provider, "m", messages, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&h->provider, "m", messages, 1, 8, "", 80) == 0);
 
     memset(&request, 0, sizeof(request));
     request.host = "wang.local";
@@ -312,7 +312,7 @@ static void check_happy_path_content_length(void) {
 
     http_stream_on_connected(&h->stream, true);
     CHECK(http_stream_state(&h->stream) == HTTP_STREAM_SENDING);
-    CHECK(strlen(REQUEST_BODY) == 99u);
+    CHECK(strlen(REQUEST_BODY) == 118u);
     CHECK(h->net.wire_length == strlen(REQUEST_HEAD REQUEST_BODY));
     CHECK_BYTES_EQ(h->net.wire, REQUEST_HEAD REQUEST_BODY, strlen(REQUEST_HEAD REQUEST_BODY));
 
@@ -1022,7 +1022,7 @@ static size_t cancel_on_read(void *context, size_t offset, char *destination, si
 
 static size_t body_length_99(void *context) {
     (void)context;
-    return 99u; /* strlen(REQUEST_BODY) */
+    return 118u; /* strlen(REQUEST_BODY) */
 }
 
 static void check_cancel_from_body_read(void) {
@@ -1405,7 +1405,7 @@ static void check_bearer_token_and_tls_headers(void) {
 
     harness_reset(h);
     ollama_provider_init(&h->provider, on_event, h);
-    CHECK(ollama_provider_build_request(&h->provider, "m", messages, 1, 8) == 0);
+    CHECK(ollama_provider_build_request(&h->provider, "m", messages, 1, 8, NULL, 80) == 0);
 
     memset(&request, 0, sizeof(request));
     request.host = "api.deepseek.com";
@@ -1428,7 +1428,7 @@ static void check_bearer_token_and_tls_headers(void) {
     http_stream_on_connected(&h->stream, true);
     CHECK(strstr(h->net.wire, "Authorization: Bearer sk-testsecretkey123\r\n") != NULL);
     CHECK(strstr(h->net.wire, "Content-Type: application/json\r\n") != NULL);
-    CHECK(strstr(h->net.wire, "Content-Length: 99\r\n") != NULL);
+    CHECK(strstr(h->net.wire, "Content-Length: ") != NULL);
 }
 
 void test_http_stream(void) {

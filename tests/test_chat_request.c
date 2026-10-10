@@ -86,8 +86,10 @@ static void check_measure_matches_real_request(void) {
     config.max_predict = 64u;
     chat_request_measure_init(&measure, &config);
 
-    const char *expected = "{\"model\":\"llama3.2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
-                           "\"stream\":true,\"options\":{\"num_predict\":64}}";
+    const char *expected =
+        "{\"model\":\"llama3.2\",\"messages\":[{\"role\":\"system\",\"content\":\"" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\"},"
+        "{\"role\":\"user\",\"content\":\"hi\"}],"
+        "\"stream\":true,\"options\":{\"num_predict\":64,\"temperature\":0.80}}";
     CHECK(chat_request_measure(&measure, NULL, 0u, "hi", 2u) == strlen(expected));
 
     /* Escaping counts: the measure is the serialised size, not the text size. */
@@ -95,7 +97,7 @@ static void check_measure_matches_real_request(void) {
     set_message(&messages[1], CHAT_ROLE_ASSISTANT, "x");
     ollama_message_t direct[3] = {{"user", messages[0].text}, {"assistant", messages[1].text}, {"user", "ok"}};
     ollama_provider_init(&reference, NULL, NULL);
-    CHECK(ollama_provider_build_request(&reference, "llama3.2", direct, 3u, 64) == 0);
+    CHECK(ollama_provider_build_request(&reference, "llama3.2", direct, 3u, 64, config.system_prompt, 80) == 0);
     CHECK(chat_request_measure(&measure, messages, 2u, "ok", 2u) ==
           ollama_provider_request_length(&reference));
 
@@ -169,7 +171,7 @@ static void check_model_evicts_until_request_fits(void) {
         CHECK_STR_EQ(converted[count - 1u].role, "user");
         ollama_provider_init(&reference, NULL, NULL);
         CHECK(ollama_provider_build_request(&reference, config.model, converted, count,
-                                            (int)config.max_predict) == 0);
+                                            (int)config.max_predict, "", 80) == 0);
         CHECK(ollama_provider_request_length(&reference) <= OLLAMA_REQUEST_MAX);
 
         CHECK(chat_model_append_response(&model, text, strlen(text)) == 0);

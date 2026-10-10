@@ -5,10 +5,11 @@
 
 /* Upper bound of ai_config_serialize output: every text field at capacity
  * plus, per line, the key, '=', a 32-bit decimal and the newline. */
-#define CONFIG_STORE_KEY_COUNT 12u
+#define CONFIG_STORE_KEY_COUNT 14u
 #define CONFIG_STORE_TEXT_CAPACITY \
     (AI_CONFIG_SSID_CAPACITY + AI_CONFIG_PASSWORD_CAPACITY + AI_CONFIG_PROVIDER_CAPACITY + \
      AI_CONFIG_HOST_CAPACITY + AI_CONFIG_MODEL_CAPACITY + AI_CONFIG_BEARER_TOKEN_CAPACITY + \
+     AI_CONFIG_SYSTEM_PROMPT_CAPACITY + \
      CONFIG_STORE_KEY_COUNT * (AI_CONFIG_KEY_CAPACITY + 1u + 10u + 1u) + 1u)
 
 /* Scratch state: a file chunk while loading, the whole file while saving. */

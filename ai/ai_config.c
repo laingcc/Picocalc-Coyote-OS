@@ -16,13 +16,15 @@ enum {
     KEY_REQUEST_TIMEOUT,
     KEY_IDLE_TIMEOUT,
     KEY_MAX_PREDICT,
+    KEY_SYSTEM_PROMPT,
+    KEY_TEMPERATURE,
     KEY_UNKNOWN
 };
 
 static const char *const key_names[] = {
     "version", "ssid", "password", "provider", "host", "port", "model",
     "bearer_token", "connect_timeout_ms", "request_timeout_ms", "idle_timeout_ms",
-    "max_predict"
+    "max_predict", "system_prompt", "temperature"
 };
 
 ai_config_status_t ai_config_init(ai_config_t *config) {
@@ -39,6 +41,9 @@ ai_config_status_t ai_config_init(ai_config_t *config) {
     config->request_timeout_ms = 120000u;
     config->idle_timeout_ms = 15000u;
     config->max_predict = 384u;
+    config->temperature = 80u;
+    memcpy(config->system_prompt, AI_CONFIG_DEFAULT_SYSTEM_PROMPT,
+           sizeof(AI_CONFIG_DEFAULT_SYSTEM_PROMPT));
     return AI_CONFIG_OK;
 }
 
@@ -156,6 +161,22 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
         case KEY_MAX_PREDICT:
             return parse_u32(parser, id, value, AI_CONFIG_MAX_PREDICT_MIN,
                              AI_CONFIG_MAX_PREDICT_MAX, &config->max_predict);
+        case KEY_SYSTEM_PROMPT: {
+            const unsigned char *p;
+            for (p = (const unsigned char *)value; *p != '\0'; p++) {
+                if (*p < 0x20u || *p == 0x7fu) {
+                    return fail(parser, AI_CONFIG_INVALID_VALUE, id);
+                }
+            }
+            return copy_value(parser, id, config->system_prompt, sizeof(config->system_prompt), value);
+        }
+        case KEY_TEMPERATURE:
+            status = parse_u32(parser, id, value, AI_CONFIG_TEMPERATURE_MIN,
+                               AI_CONFIG_TEMPERATURE_MAX, &number);
+            if (status == AI_CONFIG_OK) {
+                config->temperature = (uint16_t)number;
+            }
+            return status;
         default:
             return AI_CONFIG_OK;
     }
@@ -313,7 +334,8 @@ static int serializable_text(const char *text, size_t capacity, int allow_empty)
         return 0;
     }
     for (i = 0u; i < length; i++) {
-        if (text[i] == '\r' || text[i] == '\n') {
+        unsigned char c = (unsigned char)text[i];
+        if (c < 0x20u || c == 0x7fu) {
             return 0;
         }
     }
@@ -363,6 +385,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         !serializable_text(config->host, sizeof(config->host), 1) ||
         !serializable_text(config->model, sizeof(config->model), 1) ||
         !serializable_text(config->bearer_token, sizeof(config->bearer_token), 1) ||
+        !serializable_text(config->system_prompt, sizeof(config->system_prompt), 1) ||
         config->port == 0u ||
         config->connect_timeout_ms < AI_CONFIG_CONNECT_TIMEOUT_MS_MIN ||
         config->connect_timeout_ms > AI_CONFIG_CONNECT_TIMEOUT_MS_MAX ||
@@ -371,7 +394,8 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         config->idle_timeout_ms < AI_CONFIG_IDLE_TIMEOUT_MS_MIN ||
         config->idle_timeout_ms > AI_CONFIG_IDLE_TIMEOUT_MS_MAX ||
         config->max_predict < AI_CONFIG_MAX_PREDICT_MIN ||
-        config->max_predict > AI_CONFIG_MAX_PREDICT_MAX) {
+        config->max_predict > AI_CONFIG_MAX_PREDICT_MAX ||
+        config->temperature > AI_CONFIG_TEMPERATURE_MAX) {
         *length = 0u;
         return AI_CONFIG_INVALID_VALUE;
     }
@@ -387,7 +411,9 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("connect_timeout_ms=\n") - 1u + decimal_length(config->connect_timeout_ms) +
                sizeof("request_timeout_ms=\n") - 1u + decimal_length(config->request_timeout_ms) +
                sizeof("idle_timeout_ms=\n") - 1u + decimal_length(config->idle_timeout_ms) +
-               sizeof("max_predict=\n") - 1u + decimal_length(config->max_predict);
+               sizeof("max_predict=\n") - 1u + decimal_length(config->max_predict) +
+               sizeof("system_prompt=\n") - 1u + strlen(config->system_prompt) +
+               sizeof("temperature=\n") - 1u + decimal_length(config->temperature);
     *length = required;
     if (destination == NULL || capacity <= required) {
         return AI_CONFIG_NO_SPACE;
@@ -421,6 +447,8 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
     APPEND_NUMBER_FIELD("request_timeout_ms", config->request_timeout_ms);
     APPEND_NUMBER_FIELD("idle_timeout_ms", config->idle_timeout_ms);
     APPEND_NUMBER_FIELD("max_predict", config->max_predict);
+    APPEND_FIELD("system_prompt", config->system_prompt);
+    APPEND_NUMBER_FIELD("temperature", config->temperature);
 
 #undef APPEND_NUMBER_FIELD
 #undef APPEND_FIELD

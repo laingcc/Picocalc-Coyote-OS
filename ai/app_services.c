@@ -17,6 +17,9 @@
 #include "lwip/ip_addr.h"
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
+#include "lwip/altcp.h"
+#include "lwip/altcp_tcp.h"
+#include "lwip/altcp_tls.h"
 #endif
 
 /* All service state is static: these objects are far too large for a stack. */
@@ -166,21 +169,22 @@ static void scan_settle(void) {
  * from here, so no locking is needed.
  */
 static struct {
-    struct tcp_pcb *pcb;
+    struct altcp_pcb *pcb;
     ip_addr_t address;
     uintptr_t dns_generation;
     bool aborted;
+    struct altcp_tls_config *tls_config;
 } net;
 
-static void net_detach(struct tcp_pcb *pcb) {
-    tcp_arg(pcb, NULL);
-    tcp_recv(pcb, NULL);
-    tcp_sent(pcb, NULL);
-    tcp_err(pcb, NULL);
+static void net_detach(struct altcp_pcb *pcb) {
+    altcp_arg(pcb, NULL);
+    altcp_recv(pcb, NULL);
+    altcp_sent(pcb, NULL);
+    altcp_err(pcb, NULL);
 }
 
 static void net_tcp_abort(void *context) {
-    struct tcp_pcb *pcb = net.pcb;
+    struct altcp_pcb *pcb = net.pcb;
     (void)context;
     if (pcb == NULL) {
         return;
@@ -188,21 +192,21 @@ static void net_tcp_abort(void *context) {
     net.pcb = NULL;
     net.aborted = true;
     net_detach(pcb);
-    tcp_abort(pcb);
+    altcp_abort(pcb);
 }
 
 static void net_tcp_close(void *context) {
-    struct tcp_pcb *pcb = net.pcb;
+    struct altcp_pcb *pcb = net.pcb;
     (void)context;
     if (pcb == NULL) {
         return;
     }
     net.pcb = NULL;
     net_detach(pcb);
-    if (tcp_close(pcb) != ERR_OK) {
+    if (altcp_close(pcb) != ERR_OK) {
         /* No memory for the FIN: drop the connection rather than leak it. */
         net.aborted = true;
-        tcp_abort(pcb);
+        altcp_abort(pcb);
     }
 }
 
@@ -210,7 +214,7 @@ static err_t net_callback_result(void) {
     return net.aborted ? ERR_ABRT : ERR_OK;
 }
 
-static err_t net_on_connected(void *arg, struct tcp_pcb *pcb, err_t err) {
+static err_t net_on_connected(void *arg, struct altcp_pcb *pcb, err_t err) {
     (void)arg;
     (void)pcb;
     net.aborted = false;
@@ -218,7 +222,7 @@ static err_t net_on_connected(void *arg, struct tcp_pcb *pcb, err_t err) {
     return net_callback_result();
 }
 
-static err_t net_on_sent(void *arg, struct tcp_pcb *pcb, u16_t length) {
+static err_t net_on_sent(void *arg, struct altcp_pcb *pcb, u16_t length) {
     (void)arg;
     (void)pcb;
     net.aborted = false;
@@ -226,7 +230,7 @@ static err_t net_on_sent(void *arg, struct tcp_pcb *pcb, u16_t length) {
     return net_callback_result();
 }
 
-static err_t net_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
+static err_t net_on_recv(void *arg, struct altcp_pcb *pcb, struct pbuf *p, err_t err) {
     struct pbuf *q;
     (void)arg;
     net.aborted = false;
@@ -250,7 +254,7 @@ static err_t net_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t e
         http_stream_on_recv(&services.stream, (const char *)q->payload, q->len);
     }
     if (net.pcb == pcb) {
-        tcp_recved(pcb, p->tot_len);
+        altcp_recved(pcb, p->tot_len);
     }
     pbuf_free(p);
     return net_callback_result();
@@ -289,23 +293,37 @@ static int net_dns_resolve(void *context, const char *host) {
 }
 
 static int net_tcp_connect(void *context, uint16_t port, bool use_tls) {
-    struct tcp_pcb *pcb;
+    struct altcp_pcb *pcb;
     (void)context;
-    (void)use_tls;
     if (net.pcb != NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
-    pcb = tcp_new_ip_type(IP_GET_TYPE(&net.address));
+    if (use_tls) {
+#if LWIP_ALTCP && LWIP_ALTCP_TLS
+        if (net.tls_config == NULL) {
+            net.tls_config = altcp_tls_create_config_client(NULL, 0);
+        }
+        if (net.tls_config != NULL) {
+            pcb = altcp_tls_new(net.tls_config, IP_GET_TYPE(&net.address));
+        } else {
+            pcb = altcp_tcp_new_ip_type(IP_GET_TYPE(&net.address));
+        }
+#else
+        pcb = altcp_tcp_new_ip_type(IP_GET_TYPE(&net.address));
+#endif
+    } else {
+        pcb = altcp_tcp_new_ip_type(IP_GET_TYPE(&net.address));
+    }
     if (pcb == NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
-    tcp_arg(pcb, NULL);
-    tcp_recv(pcb, net_on_recv);
-    tcp_sent(pcb, net_on_sent);
-    tcp_err(pcb, net_on_error);
-    if (tcp_connect(pcb, &net.address, port, net_on_connected) != ERR_OK) {
+    altcp_arg(pcb, NULL);
+    altcp_recv(pcb, net_on_recv);
+    altcp_sent(pcb, net_on_sent);
+    altcp_err(pcb, net_on_error);
+    if (altcp_connect(pcb, &net.address, port, net_on_connected) != ERR_OK) {
         net_detach(pcb);
-        tcp_abort(pcb);
+        altcp_abort(pcb);
         return HTTP_STREAM_IO_ERROR;
     }
     net.pcb = pcb;
@@ -319,21 +337,21 @@ static int net_tcp_write(void *context, const char *data, size_t length) {
     if (net.pcb == NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
-    room = tcp_sndbuf(net.pcb);
+    room = altcp_sndbuf(net.pcb);
     if (length > room) {
         length = room;
     }
     if (length == 0u) {
         return 0;
     }
-    err = tcp_write(net.pcb, data, (u16_t)length, TCP_WRITE_FLAG_COPY);
+    err = altcp_write(net.pcb, data, (u16_t)length, TCP_WRITE_FLAG_COPY);
     if (err == ERR_MEM) {
         return 0; /* no segment memory yet: retried after an ack or on poll */
     }
     if (err != ERR_OK) {
         return HTTP_STREAM_IO_ERROR;
     }
-    tcp_output(net.pcb);
+    altcp_output(net.pcb);
     return (int)length;
 }
 
@@ -566,7 +584,8 @@ int app_services_chat_start(const ollama_message_t *messages,
     if (strcmp(services.config.provider, "ollama") == 0) {
         ollama_provider_init(&services.provider.ollama, on_provider_event, NULL);
         if (ollama_provider_build_request(&services.provider.ollama, services.config.model, messages, message_count,
-                                          (int)services.config.max_predict) != 0) {
+                                          (int)services.config.max_predict, services.config.system_prompt,
+                                          (int)services.config.temperature) != 0) {
             return -1;
         }
         request.method = ollama_provider_method();
@@ -588,7 +607,8 @@ int app_services_chat_start(const ollama_message_t *messages,
         }
         deepseek_provider_init(&services.provider.deepseek, on_provider_event, NULL);
         if (deepseek_provider_build_request(&services.provider.deepseek, services.config.model, deepseek_converted, message_count,
-                                            (int)services.config.max_predict) != 0) {
+                                            (int)services.config.max_predict, services.config.system_prompt,
+                                            (int)services.config.temperature) != 0) {
             return -1;
         }
         request.method = deepseek_provider_method();
