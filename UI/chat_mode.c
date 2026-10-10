@@ -11,6 +11,7 @@
 #include "ai/chat_request.h"
 #include "ai/chat_settings.h"
 #include "ai/config_store.h"
+#include "time/time_service.h"
 
 #define COLS (LCD_WIDTH / 8)
 #define ROW_H 12
@@ -62,12 +63,33 @@ static const char *wifi_label(void) {
     }
 }
 
+/* The left of the status line: Wi-Fi state, then the model and what the chat
+ * is doing.  A note (usually an error) takes the model's place so it is not
+ * cut short. */
+static void format_status_text(char *line, size_t capacity) {
+    if (note[0]) snprintf(line, capacity, "%-8s %s", wifi_label(), note);
+    else snprintf(line, capacity, "%-8s %.13s %s", wifi_label(), config.model[0] ? config.model : "(no model)",
+                  chat_model_is_streaming(&chat) ? "streaming" : "F5:menu");
+}
+
+/* Pad line out to COLS and put the clock (local time) at its right edge,
+ * unless the text is long enough to need the room. */
+static void place_status_clock(char *line) {
+    char clock[TIME_SYNC_LABEL_CAPACITY];
+    size_t len = strlen(line), clock_len;
+
+    time_service_label(config.utc_offset_minutes, clock, sizeof(clock));
+    clock_len = strlen(clock);
+    if (len + 1 + clock_len > COLS) return;
+    memset(line + len, ' ', COLS - len);
+    memcpy(line + COLS - clock_len, clock, clock_len + 1);
+}
+
 static void draw_status(bool force) {
     char line[COLS + 1];
-    /* A note (usually an error) takes the model's place so it is not cut short. */
-    if (note[0]) snprintf(line, sizeof(line), "%-8s %s", wifi_label(), note);
-    else snprintf(line, sizeof(line), "%-8s %.16s  %s", wifi_label(), config.model[0] ? config.model : "(no model)",
-                  chat_model_is_streaming(&chat) ? "streaming..." : "F5:menu");
+
+    format_status_text(line, sizeof(line));
+    place_status_clock(line);
     if (!force && strcmp(line, status_drawn) == 0) return;
     strcpy(status_drawn, line);
     draw_cells(STATUS_ROW, 0, line, strlen(line), COLS, WHITE, GRAY);
@@ -277,16 +299,17 @@ static void apply_config(void) {
 
 static void explain_rejection(chat_setting_t field, ai_config_status_t status) {
     char text[32];
-    unsigned long lo = 0, hi = 0;
+    long lo = 0, hi = 0;
     switch (field) {
         case CHAT_SETTING_PORT: lo = 1; hi = 65535; break;
         case CHAT_SETTING_CONNECT_TIMEOUT: lo = AI_CONFIG_CONNECT_TIMEOUT_MS_MIN; hi = AI_CONFIG_CONNECT_TIMEOUT_MS_MAX; break;
         case CHAT_SETTING_REQUEST_TIMEOUT: lo = AI_CONFIG_REQUEST_TIMEOUT_MS_MIN; hi = AI_CONFIG_REQUEST_TIMEOUT_MS_MAX; break;
         case CHAT_SETTING_IDLE_TIMEOUT: lo = AI_CONFIG_IDLE_TIMEOUT_MS_MIN; hi = AI_CONFIG_IDLE_TIMEOUT_MS_MAX; break;
         case CHAT_SETTING_MAX_PREDICT: lo = AI_CONFIG_MAX_PREDICT_MIN; hi = AI_CONFIG_MAX_PREDICT_MAX; break;
+        case CHAT_SETTING_UTC_OFFSET: lo = AI_CONFIG_UTC_OFFSET_MINUTES_MIN; hi = AI_CONFIG_UTC_OFFSET_MINUTES_MAX; break;
         default: break;
     }
-    if (hi) snprintf(text, sizeof(text), " Enter %lu to %lu ", lo, hi);
+    if (hi) snprintf(text, sizeof(text), " Enter %ld to %ld ", lo, hi);
     else snprintf(text, sizeof(text), "%s", status == AI_CONFIG_VALUE_TOO_LONG ? " Too long " : " Not a valid value ");
     notice(" NOT CHANGED ", text);
 }
@@ -423,6 +446,8 @@ void chat_mode_init(void) {
     scroll = 0;
     transcript_dirty = composer_dirty = false;
 }
+
+void chat_mode_show_connection_settings(void) { settings_menu(); }
 
 void chat_mode_handle_input(int c) {
     sync_with_transport();

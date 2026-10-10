@@ -17,6 +17,7 @@
 #include "filesystem/vfs.h"
 #include "dirent.h"
 #include "ai/app_services.h"
+#include "time/time_service.h"
 
 #define COYOTE_DIR "/coyote"
 
@@ -65,6 +66,9 @@ bool fs_init(void) {
     return fs_mount("/", fat, sd) == 0;
 }
 
+/* Background work: runs on every main loop iteration and while a menu waits. */
+static void services_poll(void) { app_services_poll(); time_service_poll(); }
+
 int main() {
     set_sys_clock_khz(133000, true);
     stdio_init_all();
@@ -82,8 +86,9 @@ int main() {
     }
 
     app_services_init();
-    ui_set_idle_hook(app_services_poll);
+    time_service_init(COYOTE_DIR);
+    ui_set_idle_hook(services_poll);
     chat_mode_init();
 
-    while (1) { handle_keyboard(); app_services_poll(); sleep_ms(20); }
+    while (1) { handle_keyboard(); services_poll(); sleep_ms(20); }
 }

@@ -37,6 +37,8 @@ add_executable(coyote
         ai/chat_layout.c
         ai/wifi_manager.c
         ai/wifi_scan.c
+        time/time_sync.c
+        time/time_service.c
         ai/http_stream.c
         ai/app_services.c
 )
@@ -98,6 +100,10 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define MEMP_NUM_TCP_PCB            2
 #define MEMP_NUM_TCP_SEG            16
 #define MEMP_NUM_ARP_QUEUE          8
+/* DHCP, DNS (one per lookup in flight) and SNTP each hold a UDP PCB. */
+#define MEMP_NUM_UDP_PCB            6
+/* The SNTP client keeps up to two timers of its own. */
+#define MEMP_NUM_SYS_TIMEOUT        (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 2)
 #define PBUF_POOL_SIZE              16
 
 #define LWIP_ARP                    1
@@ -127,6 +133,19 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define LWIP_DHCP_DOES_ACD_CHECK    0
 #define LWIP_CHKSUM_ALGORITHM       3
 
+/* SNTP client (time/time_service.c): look the server up by name, ask as soon as
+ * it is started and then hourly, and only accept an answer from the address
+ * that was asked. */
+#define SNTP_SERVER_DNS             1
+#define SNTP_STARTUP_DELAY          0
+#define SNTP_UPDATE_DELAY           3600000
+#define SNTP_CHECK_RESPONSE         1
+#ifndef __ASSEMBLER__
+#include <stdint.h>
+void time_service_on_sntp(uint32_t epoch);
+#endif
+#define SNTP_SET_SYSTEM_TIME(sec)   time_service_on_sntp(sec)
+
 #define MEM_STATS                   0
 #define SYS_STATS                   0
 #define MEMP_STATS                  0
@@ -139,7 +158,7 @@ if (TARGET pico_cyw43_arch_lwip_poll)
     configure_file(${COYOTE_GENERATED_DIR}/lwipopts.h.in ${COYOTE_GENERATED_DIR}/lwipopts.h COPYONLY)
     target_include_directories(coyote PRIVATE ${COYOTE_GENERATED_DIR})
     target_compile_definitions(coyote PRIVATE COYOTE_HAS_WIFI=1)
-    target_link_libraries(coyote PRIVATE pico_cyw43_arch_lwip_poll)
+    target_link_libraries(coyote PRIVATE pico_cyw43_arch_lwip_poll pico_lwip_sntp)
 else()
     message(WARNING "PICO_BOARD has no CYW43 radio: building without Wi-Fi (use -DPICO_BOARD=pico2_w)")
 endif()

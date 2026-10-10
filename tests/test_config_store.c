@@ -91,6 +91,7 @@ static void fill(ai_config_t *config) {
     config->request_timeout_ms = 90000u;
     config->idle_timeout_ms = 7000u;
     config->max_predict = 1024u;
+    config->utc_offset_minutes = -210;
 }
 
 static void check_filled(const ai_config_t *config) {
@@ -106,6 +107,7 @@ static void check_filled(const ai_config_t *config) {
     CHECK(config->request_timeout_ms == 90000u);
     CHECK(config->idle_timeout_ms == 7000u);
     CHECK(config->max_predict == 1024u);
+    CHECK(config->utc_offset_minutes == -210);
 }
 
 static void check_is_default(const ai_config_t *config) {
