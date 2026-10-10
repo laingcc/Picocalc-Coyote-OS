@@ -447,6 +447,8 @@ void chat_mode_init(void) {
     transcript_dirty = composer_dirty = false;
 }
 
+void chat_mode_show_connection_settings(void) { settings_menu(); }
+
 void chat_mode_handle_input(int c) {
     sync_with_transport();
     switch (c) {

@@ -17,6 +17,7 @@ void test_config_store(void);
 void test_http_stream(void);
 void test_wifi_scan(void);
 void test_time_sync(void);
+void test_mode_menu(void);
 
 int main(void) {
     test_json_stream();
@@ -31,6 +32,7 @@ int main(void) {
     test_http_stream();
     test_wifi_scan();
     test_time_sync();
+    test_mode_menu();
 
     printf("%d checks, %d failures\n", g_tests_run, g_tests_failed);
     return g_tests_failed == 0 ? 0 : 1;

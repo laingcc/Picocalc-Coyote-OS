@@ -18,6 +18,10 @@
 #define MAX_GRAPH_FN 4
 #define MENU_X ((LCD_WIDTH - MENU_W * 8) / 2)
 #define MENU_Y ((LCD_HEIGHT - MENU_H * 12) / 2)
+#define MODE_MENU_W 24
+#define MODE_MENU_H 7
+#define MODE_MENU_X ((LCD_WIDTH - MODE_MENU_W * 8) / 2)
+#define MODE_MENU_Y ((LCD_HEIGHT - MODE_MENU_H * 12) / 2)
 
 typedef struct { char expression[INPUT_BUFFER_SIZE]; int color; bool active; } GraphFn;
 typedef struct { char label[32]; } MenuItem;
@@ -274,12 +278,14 @@ void ui_redraw_tab_content() {
 }
 
 void ui_show_mode_menu() {
-    MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}};
-    int sel = run_menu(MENU_X, MENU_Y, MENU_W, MENU_H, " MODE ", items, 3,
+    MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}, {" Connection settings "}};
+    int sel = run_menu(MODE_MENU_X, MODE_MENU_Y, MODE_MENU_W, MODE_MENU_H, " MODE ", items, 4,
                        current_mode == MODE_TEXT ? 0 : current_mode == MODE_CHAT ? 2 : 1);
     if (sel == 0) ui_set_current_mode(MODE_TEXT);
     else if (sel == 1) ui_set_current_mode(MODE_CALCULATOR);
     else if (sel == 2) ui_set_current_mode(MODE_CHAT);
+    /* The settings draw over the whole screen; repaint the mode they covered. */
+    else if (sel == 3) { chat_mode_show_connection_settings(); ui_set_current_mode(current_mode); }
     else if (current_mode == MODE_CALCULATOR) ui_redraw_tab_content();
     else if (current_mode == MODE_CHAT) chat_mode_redraw();
     else text_mode_redraw();

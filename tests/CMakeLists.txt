@@ -41,6 +41,19 @@ set_source_files_properties("${COYOTE_ROOT}/ai/config_store.c" PROPERTIES
 target_include_directories(coyote_ai PUBLIC "${COYOTE_ROOT}")
 target_compile_options(coyote_ai PRIVATE -Wall -Wextra -Werror)
 
+# The firmware's menus, built unmodified against fake hardware headers so the
+# tests can drive them with scripted keys.  chat_mode.c's configuration store
+# is swapped for a test double: the real one would write to /coyote.
+add_library(coyote_ui STATIC
+    "${COYOTE_ROOT}/UI/ui.c"
+    "${COYOTE_ROOT}/UI/chat_mode.c"
+    "${COYOTE_ROOT}/tinyexpr/tinyexpr.c"
+)
+set_source_files_properties("${COYOTE_ROOT}/UI/chat_mode.c" PROPERTIES
+    COMPILE_DEFINITIONS "config_store_load=chat_mode_test_load;config_store_save=chat_mode_test_save")
+target_include_directories(coyote_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/fakes" "${COYOTE_ROOT}")
+target_link_libraries(coyote_ui PUBLIC coyote_ai m)
+
 enable_testing()
 
 add_executable(coyote_ai_tests
@@ -57,8 +70,9 @@ add_executable(coyote_ai_tests
     test_http_stream.c
     test_wifi_scan.c
     test_time_sync.c
+    test_mode_menu.c
 )
-target_link_libraries(coyote_ai_tests PRIVATE coyote_ai)
+target_link_libraries(coyote_ai_tests PRIVATE coyote_ui coyote_ai)
 target_compile_options(coyote_ai_tests PRIVATE -Wall -Wextra -Werror)
 
 add_test(NAME coyote_ai_tests COMMAND coyote_ai_tests)
