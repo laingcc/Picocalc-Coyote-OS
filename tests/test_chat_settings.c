@@ -147,6 +147,41 @@ static void check_numeric_bounds(void) {
     }
 }
 
+static void check_utc_offset(void) {
+    static const char *const garbage[] = {"", "abc", "-", "+", "--5", "5.5", "1h", "99999999999"};
+    ai_config_t config;
+    char out[16];
+    ai_config_init(&config);
+
+    CHECK_STR_EQ(chat_settings_label(CHAT_SETTING_UTC_OFFSET), "UTC offset min");
+    chat_settings_format(&config, CHAT_SETTING_UTC_OFFSET, out, sizeof(out));
+    CHECK_STR_EQ(out, "0");
+
+    CHECK(chat_settings_set(&config, CHAT_SETTING_UTC_OFFSET, "-720") == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == -720);
+    chat_settings_format(&config, CHAT_SETTING_UTC_OFFSET, out, sizeof(out));
+    CHECK_STR_EQ(out, "-720");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_UTC_OFFSET, "+840") == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == 840);
+    chat_settings_format(&config, CHAT_SETTING_UTC_OFFSET, out, sizeof(out));
+    CHECK_STR_EQ(out, "840");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_UTC_OFFSET, "330") == AI_CONFIG_OK);
+    CHECK(config.utc_offset_minutes == 330);
+
+    /* Rejections leave the old value in place. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_UTC_OFFSET, "-721") == AI_CONFIG_OUT_OF_RANGE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_UTC_OFFSET, "841") == AI_CONFIG_OUT_OF_RANGE);
+    CHECK(config.utc_offset_minutes == 330);
+    for (size_t g = 0u; g < sizeof(garbage) / sizeof(garbage[0]); g++) {
+        CHECK(chat_settings_set(&config, CHAT_SETTING_UTC_OFFSET, garbage[g]) == AI_CONFIG_INVALID_VALUE);
+        CHECK(config.utc_offset_minutes == 330);
+    }
+
+    /* Only the edited field changes. */
+    CHECK(config.port == 11434u);
+    CHECK(config.max_predict == 384u);
+}
+
 static void check_password_is_never_shown(void) {
     ai_config_t config;
     char out[80];
@@ -240,6 +275,7 @@ void test_chat_settings(void) {
     check_labels();
     check_text_fields();
     check_numeric_bounds();
+    check_utc_offset();
     check_password_is_never_shown();
     check_arguments_and_truncation();
     check_temperature();

@@ -1,11 +1,11 @@
-#ifndef COYOTE_AI_TIME_SERVICE_H
-#define COYOTE_AI_TIME_SERVICE_H
+#ifndef COYOTE_TIME_SERVICE_H
+#define COYOTE_TIME_SERVICE_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include "ai/time_sync.h"
+#include "time/time_sync.h"
 
 /*
  * Firmware binding for the clock.
@@ -41,8 +41,8 @@ time_sync_state_t time_service_state(void);
  * alone, if no time is known yet. */
 bool time_service_now(uint32_t *epoch);
 
-/* The clock for a status line; see time_sync_label. */
-int time_service_label(char *buffer, size_t capacity);
+/* The clock for a status line, in local time; see time_sync_label. */
+int time_service_label(int utc_offset_minutes, char *buffer, size_t capacity);
 
 /* Called by the lwIP SNTP client (SNTP_SET_SYSTEM_TIME in lwipopts.h). */
 void time_service_on_sntp(uint32_t epoch);

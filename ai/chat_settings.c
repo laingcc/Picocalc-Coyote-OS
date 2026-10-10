@@ -23,6 +23,7 @@ static const setting_info_t settings[CHAT_SETTING_COUNT] = {
     {"Max predict", "max_predict"},
     {"System prompt", "system_prompt"},
     {"Temperature", "temperature"},
+    {"UTC offset min", "utc_offset_minutes"},
 };
 
 /* Scratch for validation; static because the parser is too big for a stack
@@ -109,6 +110,9 @@ static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *
             break;
         case CHAT_SETTING_TEMPERATURE:
             config->temperature = from->temperature;
+            break;
+        case CHAT_SETTING_UTC_OFFSET:
+            config->utc_offset_minutes = from->utc_offset_minutes;
             break;
         default:
             break;
@@ -249,6 +253,9 @@ size_t chat_settings_format(const ai_config_t *config, chat_setting_t field, cha
             written = snprintf(out, capacity, "%u.%02u",
                                (unsigned)(config->temperature / 100u),
                                (unsigned)(config->temperature % 100u));
+            break;
+        case CHAT_SETTING_UTC_OFFSET:
+            written = snprintf(out, capacity, "%d", (int)config->utc_offset_minutes);
             break;
         default:
             break;
