@@ -32,7 +32,7 @@ add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/ai/http_stream.c"
     "${COYOTE_ROOT}/ai/wifi_manager.c"
     "${COYOTE_ROOT}/ai/wifi_scan.c"
-    "${COYOTE_ROOT}/ai/time_sync.c"
+    "${COYOTE_ROOT}/time/time_sync.c"
 )
 # The store's rename goes through a test double so the tests can fail it and
 # imitate FAT, which will not rename over an existing file.

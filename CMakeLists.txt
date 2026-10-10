@@ -37,8 +37,8 @@ add_executable(coyote
         ai/chat_layout.c
         ai/wifi_manager.c
         ai/wifi_scan.c
-        ai/time_sync.c
-        ai/time_service.c
+        time/time_sync.c
+        time/time_service.c
         ai/http_stream.c
         ai/app_services.c
 )
@@ -133,7 +133,7 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define LWIP_DHCP_DOES_ACD_CHECK    0
 #define LWIP_CHKSUM_ALGORITHM       3
 
-/* SNTP client (ai/time_service.c): look the server up by name, ask as soon as
+/* SNTP client (time/time_service.c): look the server up by name, ask as soon as
  * it is started and then hourly, and only accept an answer from the address
  * that was asked. */
 #define SNTP_SERVER_DNS             1

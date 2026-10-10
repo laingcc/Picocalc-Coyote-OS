@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "ai/time_sync.h"
+#include "time/time_sync.h"
 #include "test_util.h"
 
 /* 2026-10-09T14:05:09Z */
@@ -160,7 +160,7 @@ static void test_starts_unset(void) {
     CHECK(time_sync_state(&sync) == TIME_SYNC_UNSET);
     CHECK(!time_sync_now(&sync, &epoch));
     CHECK(epoch == 7u);
-    CHECK(time_sync_label(&sync, label, sizeof(label)) == 0);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
     CHECK_STR_EQ(label, "--:--");
 
     /* With nothing to save, time passing offline does nothing at all. */
@@ -213,7 +213,7 @@ static void test_sync_sets_time_and_saves(void) {
     CHECK(platform.save_calls == 0);
     CHECK(time_sync_now(&sync, &epoch));
     CHECK(epoch == T0);
-    CHECK(time_sync_label(&sync, label, sizeof(label)) == 0);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
     CHECK_STR_EQ(label, "14:05");
 
     time_sync_poll(&sync, true);
@@ -232,7 +232,7 @@ static void test_sync_sets_time_and_saves(void) {
     platform.now_ms += 51000u;
     CHECK(time_sync_now(&sync, &epoch));
     CHECK(epoch == T0 + 52u);
-    CHECK(time_sync_label(&sync, label, sizeof(label)) == 0);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
     CHECK_STR_EQ(label, "14:06");
 
     /* A later answer replaces the time, even with an earlier one. */
@@ -332,7 +332,7 @@ static void test_restores_saved_time(void) {
     CHECK(time_sync_state(&sync) == TIME_SYNC_RESTORED);
     CHECK(time_sync_now(&sync, &epoch));
     CHECK(epoch == T0);
-    CHECK(time_sync_label(&sync, label, sizeof(label)) == 0);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
     CHECK_STR_EQ(label, "14:05?");
 
     /* It drifts on from where it was, and is not rewritten until due. */
@@ -351,7 +351,7 @@ static void test_restores_saved_time(void) {
     time_sync_poll(&sync, true);
     time_sync_on_sntp(&sync, T0 + 90000u);
     CHECK(time_sync_state(&sync) == TIME_SYNC_SYNCED);
-    CHECK(time_sync_label(&sync, label, sizeof(label)) == 0);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
     CHECK_STR_EQ(label, "15:05");
     time_sync_poll(&sync, true);
     CHECK(platform.save_calls == 2);
@@ -429,15 +429,76 @@ static void test_clock_wrap(void) {
     CHECK(time_sync_state(&sync) == TIME_SYNC_SYNCED);
 }
 
+/* The label shows local time: UTC plus the offset.  The time itself stays UTC. */
+static void test_label_applies_utc_offset(void) {
+    /* 2025-01-01T00:00:00Z, the earliest time the clock accepts. */
+    const uint32_t midnight = TIME_SYNC_EPOCH_MIN;
+    fake_platform_t platform = {0};
+    time_sync_t sync;
+    char label[TIME_SYNC_LABEL_CAPACITY];
+    uint32_t epoch = 0u;
+
+    time_sync_init(&sync, &fake_ops, &platform);
+    /* No time, no offset to apply. */
+    CHECK(time_sync_label(&sync, 330, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "--:--");
+
+    /* 12:34 UTC. */
+    time_sync_on_sntp(&sync, midnight + 12u * 3600u + 34u * 60u + 56u);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "12:34");
+    CHECK(time_sync_label(&sync, 330, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "18:04");
+    CHECK(time_sync_label(&sync, -300, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "07:34");
+    /* A positive offset runs past midnight into the next day. */
+    CHECK(time_sync_label(&sync, 840, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "02:34");
+    CHECK(time_sync_now(&sync, &epoch));
+    CHECK(epoch == midnight + 12u * 3600u + 34u * 60u + 56u);
+
+    /* 00:10 UTC: a negative offset runs back into the previous day. */
+    time_sync_on_sntp(&sync, midnight + 10u * 60u);
+    CHECK(time_sync_label(&sync, -300, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "19:10");
+    CHECK(time_sync_label(&sync, -720, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "12:10");
+    CHECK(time_sync_label(&sync, -15, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "23:55");
+
+    /* The far end of the epoch does not overflow. */
+    time_sync_on_sntp(&sync, UINT32_MAX);
+    CHECK(time_sync_label(&sync, 0, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "06:28");
+    CHECK(time_sync_label(&sync, 840, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "20:28");
+}
+
+/* A restored time keeps its "?" when shifted. */
+static void test_label_offset_on_restored_time(void) {
+    fake_platform_t platform = {0};
+    time_sync_t sync;
+    char label[TIME_SYNC_LABEL_CAPACITY];
+
+    platform.has_saved = 1;
+    platform.saved = TIME_SYNC_EPOCH_MIN + 23u * 3600u + 50u * 60u;
+    time_sync_init(&sync, &fake_ops, &platform);
+    CHECK(time_sync_state(&sync) == TIME_SYNC_RESTORED);
+    CHECK(time_sync_label(&sync, 60, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "00:50?");
+    CHECK(time_sync_label(&sync, -60, label, sizeof(label)) == 0);
+    CHECK_STR_EQ(label, "22:50?");
+}
+
 static void test_label_capacity(void) {
     fake_platform_t platform = {0};
     time_sync_t sync;
     char small[TIME_SYNC_LABEL_CAPACITY - 1u] = "xxxxx";
 
     time_sync_init(&sync, &fake_ops, &platform);
-    CHECK(time_sync_label(&sync, small, sizeof(small)) == -1);
+    CHECK(time_sync_label(&sync, 0, small, sizeof(small)) == -1);
     CHECK_STR_EQ(small, "");
-    CHECK(time_sync_label(&sync, NULL, 0u) == -1);
+    CHECK(time_sync_label(&sync, 0, NULL, 0u) == -1);
 }
 
 void test_time_sync(void) {
@@ -454,5 +515,7 @@ void test_time_sync(void) {
     test_implausible_saved_time_is_ignored();
     test_survives_reboot();
     test_clock_wrap();
+    test_label_applies_utc_offset();
+    test_label_offset_on_restored_time();
     test_label_capacity();
 }

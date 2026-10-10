@@ -1,4 +1,4 @@
-#include "ai/time_sync.h"
+#include "time/time_sync.h"
 
 #include <string.h>
 
@@ -101,7 +101,10 @@ int time_sync_format_hhmm(uint32_t epoch, char *buffer, size_t capacity) {
     return 0;
 }
 
-int time_sync_label(const time_sync_t *sync, char *buffer, size_t capacity) {
+int time_sync_label(const time_sync_t *sync, int utc_offset_minutes, char *buffer, size_t capacity) {
+    /* The offset as minutes ahead of UTC within one day, so it can be added
+     * to the time of day without going negative or overflowing the epoch. */
+    uint32_t ahead = (uint32_t)((utc_offset_minutes % (24 * 60) + 24 * 60) % (24 * 60));
     uint32_t epoch;
 
     if (buffer == NULL || capacity < TIME_SYNC_LABEL_CAPACITY) {
@@ -114,7 +117,7 @@ int time_sync_label(const time_sync_t *sync, char *buffer, size_t capacity) {
         memcpy(buffer, "--:--", 6u);
         return 0;
     }
-    time_sync_format_hhmm(epoch, buffer, capacity);
+    time_sync_format_hhmm(epoch % (24u * 60u * 60u) + ahead * 60u, buffer, capacity);
     if (sync->state == TIME_SYNC_RESTORED) {
         memcpy(buffer + 5, "?", 2u);
     }

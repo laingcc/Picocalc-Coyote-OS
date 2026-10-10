@@ -17,7 +17,7 @@
 #include "filesystem/vfs.h"
 #include "dirent.h"
 #include "ai/app_services.h"
-#include "ai/time_service.h"
+#include "time/time_service.h"
 
 #define COYOTE_DIR "/coyote"
 
