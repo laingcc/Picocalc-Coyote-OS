@@ -17,11 +17,28 @@
 #include "filesystem/vfs.h"
 #include "dirent.h"
 #include "ai/app_services.h"
+#include "storage/screenshot.h"
 
 #define COYOTE_DIR "/coyote"
+#define KEY_SCREENSHOT 0x13 /* Ctrl+S */
+
+static void read_lcd_row(int y, unsigned char *pixels, void *context) {
+    (void)context;
+    read_buffer_spi(0, y, LCD_WIDTH - 1, y, pixels);
+}
+
+static void take_screenshot(void) {
+    char name[SCREENSHOT_NAME_CAPACITY], text[24];
+    bool saved = screenshot_save(COYOTE_DIR, LCD_WIDTH, LCD_HEIGHT, read_lcd_row, NULL, name) == 0;
+    if (saved) snprintf(text, sizeof(text), "Saved %s", name);
+    else snprintf(text, sizeof(text), "Screenshot failed");
+    sound_play(saved ? SND_BEEP : SND_ERROR);
+    ui_show_notice(text);
+}
 
 void handle_keyboard() {
     int c = lcd_getc(0);
+    if (c == KEY_SCREENSHOT) { take_screenshot(); return; }
     if (c == KEY_HOME) { ui_show_mode_menu(); return; }
     if (ui_get_current_mode() == MODE_TEXT) { text_mode_handle_input(c); return; }
     if (ui_get_current_mode() == MODE_CHAT) { chat_mode_handle_input(c); return; }

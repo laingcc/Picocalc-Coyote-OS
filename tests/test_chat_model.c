@@ -276,6 +276,68 @@ static void check_provider_integration_eviction(void) {
     CHECK(chat_model_message_at(&model, 2)->text[0] == 'e');
 }
 
+static void check_append_message(void) {
+    chat_model_t model;
+    chat_model_init(&model, NULL, NULL, 0u);
+
+    /* NULL model rejected */
+    CHECK(chat_model_append_message(NULL, CHAT_ROLE_USER, "hi", 2u) == -1);
+
+    /* NULL text with non-zero length rejected */
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, NULL, 5u) == -1);
+
+    /* NULL text with zero length accepted */
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, NULL, 0u) == 0);
+    CHECK(chat_model_message_count(&model) == 1u);
+    CHECK_STR_EQ(chat_model_message_at(&model, 0)->text, "");
+    CHECK(chat_model_message_at(&model, 0)->length == 0u);
+    CHECK(chat_model_message_at(&model, 0)->role == CHAT_ROLE_USER);
+    CHECK(chat_model_message_at(&model, 0)->partial == false);
+
+    /* Invalid role rejected */
+    CHECK(chat_model_append_message(&model, (chat_role_t)99, "x", 1u) == -1);
+
+    /* Normal append works and preserves role and content */
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_ASSISTANT, "hello world", 11u) == 0);
+    CHECK(chat_model_message_count(&model) == 2u);
+    CHECK(chat_model_message_at(&model, 1)->role == CHAT_ROLE_ASSISTANT);
+    CHECK_STR_EQ(chat_model_message_at(&model, 1)->text, "hello world");
+    CHECK(chat_model_message_at(&model, 1)->length == 11u);
+    CHECK(chat_model_message_at(&model, 1)->partial == false);
+
+    /* Composer is untouched */
+    CHECK_STR_EQ(chat_model_composer_text(&model), "");
+    CHECK(chat_model_composer_append(&model, "comp", 4u) == 0);
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, "user2", 5u) == 0);
+    CHECK_STR_EQ(chat_model_composer_text(&model), "comp");
+
+    /* Oversized message rejected */
+    static char overlong[CHAT_MESSAGE_MAX + 2u];
+    memset(overlong, 'a', sizeof(overlong));
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, overlong, CHAT_MESSAGE_MAX + 1u) == -1);
+    CHECK(chat_model_message_count(&model) == 3u);
+
+    /* Fill to capacity (8 messages total, 3 currently) */
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_ASSISTANT, "m3", 2u) == 0);
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, "m4", 2u) == 0);
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_ASSISTANT, "m5", 2u) == 0);
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, "m6", 2u) == 0);
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_ASSISTANT, "m7", 2u) == 0);
+    CHECK(chat_model_message_count(&model) == CHAT_MAX_MESSAGES);
+
+    /* Exceeding capacity rejected */
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_ASSISTANT, "overflow", 8u) == -1);
+    CHECK(chat_model_message_count(&model) == CHAT_MAX_MESSAGES);
+
+    /* Reject while streaming */
+    chat_model_reset(&model);
+    CHECK(chat_model_composer_append(&model, "q", 1u) == 0);
+    CHECK(chat_model_submit(&model) == 0);
+    CHECK(chat_model_is_streaming(&model));
+    CHECK(chat_model_append_message(&model, CHAT_ROLE_USER, "blocked", 7u) == -1);
+    chat_model_cancel_response(&model);
+}
+
 void test_chat_model(void) {
     check_basic();
     check_composer_limits();
@@ -286,4 +348,5 @@ void test_chat_model(void) {
     check_reject_oversized_submission();
     check_null_preconditions();
     check_provider_integration_eviction();
+    check_append_message();
 }

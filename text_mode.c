@@ -2,6 +2,7 @@
 #include "lcdspi.h"
 #include "keyboard_definition.h"
 #include "UI/ui.h"
+#include "storage/file_store.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -20,24 +21,17 @@ void text_mode_redraw() {
 }
 
 static bool save_file(const char* name) {
-    char path[64];
-    snprintf(path, sizeof(path), "%s/%s.txt", COYOTE_DIR, name);
-    FILE *f = fopen(path, "w");
-    if (!f) return false;
-    fputs(text_buffer, f);
-    fclose(f);
-    return true;
+    char path[FILE_STORE_PATH_CAPACITY], file[40];
+    snprintf(file, sizeof(file), "%s.txt", name);
+    return file_store_path(path, COYOTE_DIR, file) == 0 &&
+           file_store_write_atomic(path, text_buffer, text_len) == 0;
 }
 
 static bool load_file(const char* name) {
-    char path[64];
-    snprintf(path, sizeof(path), "%s/%s", COYOTE_DIR, name);
-    FILE *f = fopen(path, "r");
+    char path[FILE_STORE_PATH_CAPACITY];
+    FILE *f = file_store_path(path, COYOTE_DIR, name) == 0 ? file_store_open(path) : NULL;
     if (!f) return false;
-    text_len = 0;
-    int ch;
-    while ((ch = fgetc(f)) != EOF && text_len < MAX_TEXT_LEN - 1)
-        text_buffer[text_len++] = ch;
+    text_len = fread(text_buffer, 1, MAX_TEXT_LEN - 1, f);
     text_buffer[text_len] = '\0';
     fclose(f);
     return true;

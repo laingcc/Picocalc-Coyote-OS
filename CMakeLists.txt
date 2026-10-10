@@ -28,6 +28,7 @@ add_executable(coyote
         config.h
         ai/ai_config.c
         ai/config_store.c
+        ai/conv_store.c
         ai/json_stream.c
         ai/http_parser.c
         ai/ollama_provider.c
@@ -39,6 +40,9 @@ add_executable(coyote
         ai/wifi_scan.c
         ai/http_stream.c
         ai/app_services.c
+        storage/export.c
+        storage/file_store.c
+        storage/screenshot.c
 )
 
 ##picocalc spi0

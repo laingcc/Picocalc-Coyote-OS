@@ -2,6 +2,7 @@
 #define COYOTE_AI_CONFIG_STORE_H
 
 #include "ai/ai_config.h"
+#include "storage/file_store.h"
 
 /*
  * Persistence of the AI configuration as <dir>/ai.ini.
@@ -16,11 +17,11 @@
  */
 
 #define CONFIG_STORE_FILE_NAME "ai.ini"
-#define CONFIG_STORE_TEMP_NAME "ai.ini.tmp"
-#define CONFIG_STORE_BACKUP_NAME "ai.ini.bak"
+#define CONFIG_STORE_TEMP_NAME CONFIG_STORE_FILE_NAME FILE_STORE_TEMP_SUFFIX
+#define CONFIG_STORE_BACKUP_NAME CONFIG_STORE_FILE_NAME FILE_STORE_BACKUP_SUFFIX
 
 /* Longest accepted "<dir>/<name>" path, including the trailing NUL. */
-#define CONFIG_STORE_PATH_CAPACITY 128u
+#define CONFIG_STORE_PATH_CAPACITY FILE_STORE_PATH_CAPACITY
 
 /*
  * Reset config to its defaults, then apply <dir>/ai.ini if there is one.
