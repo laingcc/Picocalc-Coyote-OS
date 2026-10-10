@@ -20,5 +20,9 @@ void chat_mode_init(void);
 void chat_mode_redraw(void);
 /* c is the key read this iteration, or a negative value for none. */
 void chat_mode_handle_input(int c);
+/* Open the chat menu's Connection settings from any mode.  It draws over the
+ * chat screen and returns once the menu is applied or cancelled; the caller
+ * then redraws whichever mode is in front. */
+void chat_mode_show_connection_settings(void);
 
 #endif
