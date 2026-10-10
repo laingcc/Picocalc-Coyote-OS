@@ -59,7 +59,7 @@ ctest --test-dir build-tests --output-on-failure
 ```
 
 Run `./build-tests/coyote_ai_tests` directly to see the count; it currently prints
-`12068 checks, 0 failures`.
+`12336 checks, 0 failures`.
 
 ## Building the firmware
 
