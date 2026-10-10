@@ -1,4 +1,4 @@
-#include "ai/time_service.h"
+#include "time/time_service.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -130,14 +130,14 @@ bool time_service_now(uint32_t *epoch) {
     return service.initialised && time_sync_now(&service.sync, epoch);
 }
 
-int time_service_label(char *buffer, size_t capacity) {
+int time_service_label(int utc_offset_minutes, char *buffer, size_t capacity) {
     if (!service.initialised) {
         if (buffer != NULL && capacity > 0u) {
             buffer[0] = '\0';
         }
         return -1;
     }
-    return time_sync_label(&service.sync, buffer, capacity);
+    return time_sync_label(&service.sync, utc_offset_minutes, buffer, capacity);
 }
 
 void time_service_on_sntp(uint32_t epoch) {

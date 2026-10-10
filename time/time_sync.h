@@ -1,5 +1,5 @@
-#ifndef COYOTE_AI_TIME_SYNC_H
-#define COYOTE_AI_TIME_SYNC_H
+#ifndef COYOTE_TIME_SYNC_H
+#define COYOTE_TIME_SYNC_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -31,7 +31,9 @@
  * unit stopped.
  *
  * Times are seconds since 1970-01-01T00:00:00Z in a uint32_t (good until
- * 2106).  Everything is UTC: there is no time zone handling.
+ * 2106).  Everything kept and stored is UTC; only time_sync_label shifts the
+ * time of day, by a fixed offset the caller supplies.  There are no named
+ * time zones and no daylight saving rules.
  */
 
 /* 2025-01-01T00:00:00Z.  Anything earlier, from the network or from storage,
@@ -100,10 +102,11 @@ bool time_sync_now(const time_sync_t *sync, uint32_t *epoch);
 
 /*
  * The clock as shown on a status line: "--:--" while UNSET, "HH:MM" once
- * SYNCED and "HH:MM?" while RESTORED.  Returns -1, writing "" if there is
- * room for it, when buffer cannot hold TIME_SYNC_LABEL_CAPACITY bytes.
+ * SYNCED and "HH:MM?" while RESTORED.  The time of day is local: UTC plus
+ * utc_offset_minutes, which may be negative.  Returns -1, writing "" if there
+ * is room for it, when buffer cannot hold TIME_SYNC_LABEL_CAPACITY bytes.
  */
-int time_sync_label(const time_sync_t *sync, char *buffer, size_t capacity);
+int time_sync_label(const time_sync_t *sync, int utc_offset_minutes, char *buffer, size_t capacity);
 
 /* Write the UTC time of day of epoch as "HH:MM".  Returns -1, writing "" if
  * there is room for it, when buffer cannot hold TIME_SYNC_HHMM_CAPACITY

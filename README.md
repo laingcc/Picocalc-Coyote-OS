@@ -23,7 +23,9 @@ the local network.
   backoff after a drop.
 - **Network scan** – pick the SSID from a list of up to 16 scanned networks instead of typing it.
 - **Clock** – the time is fetched from `pool.ntp.org` (SNTP) when Wi-Fi comes online and again
-  every hour, and shown as `HH:MM` (UTC) at the right of the chat status bar. It is saved to
+  every hour, and shown as `HH:MM` at the right of the chat status bar. It is UTC until you set
+  **UTC offset min** under F5, **Connection settings** (minutes ahead of UTC, `-720` to `840`; for example
+  `-300` for UTC-5 or `330` for UTC+5:30). It is saved to
   `/coyote/clock.txt` so it survives a reboot; until the next sync a restored time is shown as
   `HH:MM?`, because it is behind by however long the unit was off.
 - **SD persistence** – chat and Wi-Fi settings are saved to `/coyote/ai.ini` and reloaded at
@@ -120,8 +122,8 @@ no RTOS; lwIP runs in `NO_SYS` mode with raw callbacks, driven from that same lo
 is C11 with fixed-size static storage and makes no heap allocations. The SD card is mounted
 read/write as FAT at `/`, and everything Coyote OS writes goes under `/coyote`.
 
-Only `ai/app_services.c` and `ai/time_service.c` include Pico SDK or lwIP headers. Every other module in `ai/`
-reaches the network through function-pointer adapters, which is what lets the host tests drive
+Only `ai/app_services.c` and `time/time_service.c` include Pico SDK or lwIP headers. Every other module in `ai/`
+and `time/` reaches the network through function-pointer adapters, which is what lets the host tests drive
 the transport with fake DNS, TCP and clocks.
 
 - `UI/chat_mode.c` – the chat screen: transcript, composer, status bar, menus.
@@ -139,9 +141,9 @@ the transport with fake DNS, TCP and clocks.
 - `ai/wifi_manager` – Wi-Fi station state machine with backoff.
 - `ai/wifi_scan` – collects and de-duplicates scan results.
 - `ai/app_services` – binds the above to CYW43 and lwIP and is polled from the main loop.
-- `ai/time_sync` – the clock: carries the synced time forward, decides when SNTP runs and when
-  the time is saved, formats `HH:MM`.
-- `ai/time_service` – binds `time_sync` to the lwIP SNTP client and `/coyote/clock.txt`.
+- `time/time_sync` – the clock: carries the synced time forward, decides when SNTP runs and when
+  the time is saved, formats `HH:MM` in local time (UTC plus the configured offset).
+- `time/time_service` – binds `time_sync` to the lwIP SNTP client and `/coyote/clock.txt`.
 
 The original plan is in [docs/plans/2026-10-07-pico2w-ai-chat.md](docs/plans/2026-10-07-pico2w-ai-chat.md).
 

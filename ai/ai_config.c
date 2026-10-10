@@ -18,13 +18,14 @@ enum {
     KEY_MAX_PREDICT,
     KEY_SYSTEM_PROMPT,
     KEY_TEMPERATURE,
+    KEY_UTC_OFFSET,
     KEY_UNKNOWN
 };
 
 static const char *const key_names[] = {
     "version", "ssid", "password", "provider", "host", "port", "model",
     "bearer_token", "connect_timeout_ms", "request_timeout_ms", "idle_timeout_ms",
-    "max_predict", "system_prompt", "temperature"
+    "max_predict", "system_prompt", "temperature", "utc_offset_minutes"
 };
 
 ai_config_status_t ai_config_init(ai_config_t *config) {
@@ -104,9 +105,35 @@ static ai_config_status_t parse_u32(ai_config_parser_t *parser, int id, const ch
     return AI_CONFIG_OK;
 }
 
+/* A decimal with an optional sign.  The magnitude is parsed as an unsigned
+ * number no larger than the wider bound, so it always fits the result. */
+static ai_config_status_t parse_i32(ai_config_parser_t *parser, int id, const char *value,
+                                    int32_t minimum, int32_t maximum, int32_t *result) {
+    uint32_t limit = (uint32_t)(-minimum > maximum ? -minimum : maximum);
+    uint32_t magnitude;
+    int negative = *value == '-';
+    int32_t number;
+    ai_config_status_t status;
+
+    if (*value == '-' || *value == '+') {
+        value++;
+    }
+    status = parse_u32(parser, id, value, 0u, limit, &magnitude);
+    if (status != AI_CONFIG_OK) {
+        return status;
+    }
+    number = negative ? -(int32_t)magnitude : (int32_t)magnitude;
+    if (number < minimum || number > maximum) {
+        return fail(parser, AI_CONFIG_OUT_OF_RANGE, id);
+    }
+    *result = number;
+    return AI_CONFIG_OK;
+}
+
 static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const char *value) {
     ai_config_t *config = parser->config;
     uint32_t number;
+    int32_t offset;
     ai_config_status_t status = AI_CONFIG_OK;
 
     if ((parser->seen_keys & (uint16_t)(1u << (unsigned)id)) != 0u) {
@@ -175,6 +202,13 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
                                AI_CONFIG_TEMPERATURE_MAX, &number);
             if (status == AI_CONFIG_OK) {
                 config->temperature = (uint16_t)number;
+            }
+            return status;
+        case KEY_UTC_OFFSET:
+            status = parse_i32(parser, id, value, AI_CONFIG_UTC_OFFSET_MINUTES_MIN,
+                               AI_CONFIG_UTC_OFFSET_MINUTES_MAX, &offset);
+            if (status == AI_CONFIG_OK) {
+                config->utc_offset_minutes = (int16_t)offset;
             }
             return status;
         default:
@@ -369,6 +403,10 @@ static void append_number(char *destination, size_t *offset, uint32_t number) {
     }
 }
 
+static uint32_t magnitude_of(int32_t number) {
+    return number < 0 ? (uint32_t)-number : (uint32_t)number;
+}
+
 ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destination,
                                        size_t capacity, size_t *length) {
     size_t required;
@@ -395,7 +433,9 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         config->idle_timeout_ms > AI_CONFIG_IDLE_TIMEOUT_MS_MAX ||
         config->max_predict < AI_CONFIG_MAX_PREDICT_MIN ||
         config->max_predict > AI_CONFIG_MAX_PREDICT_MAX ||
-        config->temperature > AI_CONFIG_TEMPERATURE_MAX) {
+        config->temperature > AI_CONFIG_TEMPERATURE_MAX ||
+        config->utc_offset_minutes < AI_CONFIG_UTC_OFFSET_MINUTES_MIN ||
+        config->utc_offset_minutes > AI_CONFIG_UTC_OFFSET_MINUTES_MAX) {
         *length = 0u;
         return AI_CONFIG_INVALID_VALUE;
     }
@@ -413,7 +453,9 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("idle_timeout_ms=\n") - 1u + decimal_length(config->idle_timeout_ms) +
                sizeof("max_predict=\n") - 1u + decimal_length(config->max_predict) +
                sizeof("system_prompt=\n") - 1u + strlen(config->system_prompt) +
-               sizeof("temperature=\n") - 1u + decimal_length(config->temperature);
+               sizeof("temperature=\n") - 1u + decimal_length(config->temperature) +
+               sizeof("utc_offset_minutes=\n") - 1u + (config->utc_offset_minutes < 0 ? 1u : 0u) +
+               decimal_length(magnitude_of(config->utc_offset_minutes));
     *length = required;
     if (destination == NULL || capacity <= required) {
         return AI_CONFIG_NO_SPACE;
@@ -449,6 +491,10 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
     APPEND_NUMBER_FIELD("max_predict", config->max_predict);
     APPEND_FIELD("system_prompt", config->system_prompt);
     APPEND_NUMBER_FIELD("temperature", config->temperature);
+    append_text(destination, &offset,
+                config->utc_offset_minutes < 0 ? "utc_offset_minutes=-" : "utc_offset_minutes=");
+    append_number(destination, &offset, magnitude_of(config->utc_offset_minutes));
+    destination[offset++] = '\n';
 
 #undef APPEND_NUMBER_FIELD
 #undef APPEND_FIELD
