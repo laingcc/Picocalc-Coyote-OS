@@ -6,8 +6,6 @@
 
 #define LINE_CAPACITY (CHAT_MESSAGE_MAX + 32u)
 
-#define EXPORT_SUFFIX ".txt"
-
 typedef struct {
     FILE *file;
     char buf[512];
@@ -713,165 +711,35 @@ conv_store_status_t conv_store_save(const chat_model_t *model,
     return CONV_STORE_OK;
 }
 
-static int equals_ignore_case(const char *a, const char *b) {
-    for (; *a != '\0' && *b != '\0'; a++, b++) {
-        unsigned char ca = (unsigned char)*a;
-        unsigned char cb = (unsigned char)*b;
-        if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca - 'A' + 'a');
-        if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb - 'A' + 'a');
-        if (ca != cb) {
-            return 0;
-        }
+static conv_store_status_t from_export(export_status_t status) {
+    switch (status) {
+        case EXPORT_OK: return CONV_STORE_OK;
+        case EXPORT_TOO_LARGE: return CONV_STORE_TOO_LARGE;
+        case EXPORT_INVALID_ARGUMENT: return CONV_STORE_INVALID_ARGUMENT;
+        default: return CONV_STORE_IO_ERROR;
     }
-    return *a == *b;
 }
 
 conv_store_status_t conv_store_export_path(const char *title,
                                            const char *dir,
                                            char *path,
                                            size_t capacity) {
-    /* Stem, an optional '_' to dodge the store's own file, suffix and NUL. */
-    char name[CONV_STORE_EXPORT_NAME_MAX + 1u + sizeof(EXPORT_SUFFIX)];
-    size_t n = 0u;
-
-    if (title == NULL || dir == NULL || path == NULL) {
-        return CONV_STORE_INVALID_ARGUMENT;
-    }
     if (sanitize_title(clean_title_buf, title) != 0) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
-
-    for (const char *p = clean_title_buf; *p != '\0' && n < CONV_STORE_EXPORT_NAME_MAX; p++) {
-        char c = *p;
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
-            name[n++] = c;
-        } else if (n > 0u && name[n - 1u] != '_') {
-            name[n++] = '_';
-        }
-    }
-    while (n > 0u && name[n - 1u] == '_') {
-        n--;
-    }
-    if (n == 0u) {
-        memcpy(name, "chat", 4u);
-        n = 4u;
-    }
-    memcpy(name + n, EXPORT_SUFFIX, sizeof(EXPORT_SUFFIX));
-    /* FAT ignores case, so "Convs" would overwrite the conversation store. */
-    if (equals_ignore_case(name, CONV_STORE_FILE_NAME)) {
-        name[n++] = '_';
-        memcpy(name + n, EXPORT_SUFFIX, sizeof(EXPORT_SUFFIX));
-    }
-
-    size_t dir_length = strlen(dir);
-    size_t name_length = n + sizeof(EXPORT_SUFFIX) - 1u;
-    if (dir_length == 0u || dir_length + 1u + name_length >= capacity) {
-        return CONV_STORE_INVALID_ARGUMENT;
-    }
-    memcpy(path, dir, dir_length);
-    path[dir_length] = '/';
-    memcpy(path + dir_length + 1u, name, name_length + 1u);
-    return CONV_STORE_OK;
-}
-
-static int export_bytes(FILE *f, const char *data, size_t len, size_t *total) {
-    if (write_bytes(f, data, len) != 0) {
-        return -1;
-    }
-    *total += len;
-    return 0;
-}
-
-static int export_str(FILE *f, const char *str, size_t *total) {
-    return export_bytes(f, str, strlen(str), total);
-}
-
-/* Writes text in runs, skipping control characters other than newline and tab. */
-static int export_text(FILE *f, const char *text, size_t length, size_t *total) {
-    size_t start = 0u;
-
-    for (size_t i = 0u; i < length; i++) {
-        unsigned char c = (unsigned char)text[i];
-        if (is_control(c) && c != '\n' && c != '\t') {
-            if (export_bytes(f, text + start, i - start, total) != 0) {
-                return -1;
-            }
-            start = i + 1u;
-        }
-    }
-    return export_bytes(f, text + start, length - start, total);
-}
-
-static int export_conversation(FILE *f, const chat_model_t *model, const char *title, size_t *total) {
-    if (export_str(f, "# ", total) != 0 || export_str(f, title, total) != 0 ||
-        export_str(f, "\n\n", total) != 0) {
-        return -1;
-    }
-
-    size_t count = chat_model_message_count(model);
-    for (size_t i = 0; i < count; i++) {
-        const chat_message_t *m = chat_model_message_at(model, i);
-        const char *label = "assistant: ";
-        if (m == NULL) {
-            return -1;
-        }
-        if (m->role == CHAT_ROLE_USER) {
-            label = "user: ";
-        } else if (m->partial) {
-            label = "assistant (incomplete): ";
-        }
-        if (export_str(f, label, total) != 0 ||
-            export_text(f, m->text, m->length, total) != 0 ||
-            export_str(f, "\n", total) != 0) {
-            return -1;
-        }
-    }
-    return 0;
+    /* An export must never land on the conversation store itself. */
+    return from_export(export_path(clean_title_buf, dir, CONV_STORE_FILE_NAME, path, capacity));
 }
 
 conv_store_status_t conv_store_export(const chat_model_t *model,
                                       const char *title,
                                       const char *path,
                                       size_t *written) {
-    size_t total = 0u;
-
     if (written != NULL) {
         *written = 0u;
-    }
-    if (model == NULL || title == NULL || path == NULL) {
-        return CONV_STORE_INVALID_ARGUMENT;
     }
     if (sanitize_title(clean_title_buf, title) != 0) {
         return CONV_STORE_INVALID_ARGUMENT;
     }
-    size_t path_length = strlen(path);
-    if (path_length == 0u || path_length + sizeof(FILE_STORE_TEMP_SUFFIX) > FILE_STORE_PATH_CAPACITY) {
-        return CONV_STORE_INVALID_ARGUMENT;
-    }
-
-    size_t count = chat_model_message_count(model);
-    if (count == 0u) {
-        return CONV_STORE_INVALID_ARGUMENT;
-    }
-    for (size_t i = 0; i < count; i++) {
-        const chat_message_t *m = chat_model_message_at(model, i);
-        if (m == NULL || m->length > CHAT_MESSAGE_MAX) {
-            return CONV_STORE_TOO_LARGE;
-        }
-    }
-
-    /* Same atomic temp -> rename swap as the store, aimed at the export file. */
-    FILE *out = file_store_open_temp(path);
-    if (out == NULL) {
-        return CONV_STORE_IO_ERROR;
-    }
-
-    int failed = export_conversation(out, model, clean_title_buf, &total) != 0;
-    if (file_store_commit(path, out, failed) != 0) {
-        return CONV_STORE_IO_ERROR;
-    }
-    if (written != NULL) {
-        *written = total;
-    }
-    return CONV_STORE_OK;
+    return from_export(export_conversation(model, clean_title_buf, path, written));
 }

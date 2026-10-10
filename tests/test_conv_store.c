@@ -642,6 +642,13 @@ static void check_export_path(void) {
     CHECK(conv_store_export_path("Convs!", "/coyote", path, sizeof(path)) == CONV_STORE_OK);
     CHECK_STR_EQ(path, "/coyote/Convs_.txt");
 
+    /* The reserved name belongs to the caller; the export layer has none of its own. */
+    CHECK(export_path("convs", "/coyote", NULL, path, sizeof(path)) == EXPORT_OK);
+    CHECK_STR_EQ(path, "/coyote/convs.txt");
+    CHECK(export_path("Notes", "/coyote", "notes.txt", path, sizeof(path)) == EXPORT_OK);
+    CHECK_STR_EQ(path, "/coyote/Notes_.txt");
+    CHECK(export_path(NULL, "/coyote", NULL, path, sizeof(path)) == EXPORT_INVALID_ARGUMENT);
+
     /* The stem is cut to CONV_STORE_EXPORT_NAME_MAX, without a trailing '_'. */
     CHECK(conv_store_export_path("0123456789012345678901234567890123456789", "/coyote", path, sizeof(path)) ==
           CONV_STORE_OK);
