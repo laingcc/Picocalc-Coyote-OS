@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "ai/ai_config.h"
+#include "ai/deepseek_provider.h"
 #include "ai/http_stream.h"
 #include "ai/ollama_provider.h"
 #include "ai/provider.h"
@@ -15,9 +16,9 @@
  * Firmware binding for the AI chat path.
  *
  * app_services owns the single static instances of the configuration, the
- * Wi-Fi manager, the network scan, the HTTP stream and the Ollama provider,
- * and wires the state machines to CYW43 and lwIP raw callbacks
- * (pico_cyw43_arch_lwip_poll).
+ * Wi-Fi manager, the network scan, the HTTP stream and the Ollama and
+ * DeepSeek providers, and wires the state machines to CYW43 and lwIP altcp
+ * callbacks (pico_cyw43_arch_lwip_poll).
  * Everything runs from app_services_poll on the main loop; there are no
  * threads, no blocking network calls and no heap allocations here.
  *
@@ -25,9 +26,14 @@
  * for the radio is never powered, so a unit without configuration behaves
  * exactly as it did before.
  *
- * The stored configuration holds the Wi-Fi password.  No function in this
- * interface returns it or the configuration that contains it, and nothing
- * here logs.
+ * The stored configuration holds the Wi-Fi password and, for DeepSeek, the
+ * API key.  No function in this interface returns them or the configuration
+ * that contains them, and nothing here logs.
+ *
+ * A "deepseek" configuration is served directly: a TLS connection to
+ * api.deepseek.com:443 whose certificate chain and host name are verified
+ * against the roots built into the firmware.  There is no unverified or
+ * plain-text mode; any failure to set up or verify TLS fails the request.
  *
  * When the board has no CYW43 radio the same interface is built without
  * networking: the Wi-Fi state reports ERROR, a scan fails to start and no
@@ -79,14 +85,25 @@ size_t app_services_wifi_scan_count(void);
 int app_services_wifi_scan_at(size_t i, char *ssid_buf, int *rssi);
 
 /*
- * Send messages to the configured Ollama host and stream the reply to
- * callback as provider events.  Events are delivered from inside
+ * Whether a DeepSeek chat could be started now, apart from Wi-Fi: the
+ * configuration is complete and SNTP has set the clock since boot.  Until it
+ * has, DEEPSEEK_START_CLOCK_NOT_SYNCED is returned and app_services_chat_start
+ * refuses, because a certificate's validity cannot be checked without the
+ * date; a time restored from the SD card does not count.
+ */
+deepseek_start_t app_services_deepseek_ready(void);
+
+/*
+ * Send messages to the configured provider (an Ollama host, or DeepSeek) and
+ * stream the reply to callback as provider events.  Events are delivered from inside
  * app_services_poll and stop as soon as the chat is cancelled.  The message
  * strings are serialised before this returns and need not outlive the call.
  *
  * Returns 0 once the request is under way.  Returns -1 if Wi-Fi is not
- * online, a chat is already active, the provider is not "ollama", or the
- * request cannot be built (no model, too many or too large messages).
+ * online, a chat is already active, the provider is neither "ollama" nor
+ * "deepseek", app_services_deepseek_ready is not DEEPSEEK_START_OK for a
+ * DeepSeek chat, or the request cannot be built (no model, too many or too
+ * large messages).
  * Progress and the final outcome are read from app_services_chat_state and
  * app_services_chat_error.
  */

@@ -109,4 +109,20 @@ int json_escape_string(const char *src, size_t src_length, char *dst, size_t dst
  */
 int json_unescape_string(const char *src, size_t src_length, char *dst, size_t dst_size, size_t *out_length);
 
+/*
+ * Scanning primitives, shared with the other stream parsers.  Each works on
+ * NUL-terminated text holding one record (no line breaks) and advances *cursor
+ * past what it consumed.
+ *
+ * json_scan_whitespace skips blanks and tabs.  json_scan_string decodes a
+ * quoted string into out (NULL to discard), storing the decoded length and
+ * setting *overflow if it did not fit out_cap bytes including the NUL; a raw
+ * control character, a bad escape or a decoded U+0000 fails.
+ * json_scan_skip_value validates and skips any one JSON value.  Both return 0
+ * on success and -1 on malformed input.
+ */
+const char *json_scan_whitespace(const char *p);
+int json_scan_string(const char **cursor, char *out, size_t out_cap, size_t *out_length, bool *overflow);
+int json_scan_skip_value(const char **cursor);
+
 #endif

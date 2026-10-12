@@ -203,7 +203,18 @@ static const char *stream_error_text(http_stream_error_t error) {
         case HTTP_STREAM_ERROR_PROTOCOL: return "bad HTTP reply";
         case HTTP_STREAM_ERROR_SINK: return "bad reply stream";
         case HTTP_STREAM_ERROR_CANCELLED: return "cancelled";
+        case HTTP_STREAM_ERROR_TLS: return "secure connection failed";
         default: return "request failed";
+    }
+}
+
+/* What DeepSeek's error statuses mean; its error bodies are never shown. */
+static const char *deepseek_status_text(int status) {
+    switch (status) {
+        case 401: return "API key rejected";
+        case 402: return "no DeepSeek balance";
+        case 429: return "rate limited: try later";
+        default: return NULL;
     }
 }
 
@@ -241,9 +252,11 @@ static void sync_with_transport(void) {
         chat_model_complete_response(&chat);
     } else {
         chat_model_fail_response(&chat);
-        if (app_services_chat_error() == HTTP_STREAM_ERROR_HTTP_STATUS)
-            snprintf(note, sizeof(note), "HTTP %d", app_services_chat_status_code());
-        else set_note(stream_error_text(app_services_chat_error()));
+        if (app_services_chat_error() == HTTP_STREAM_ERROR_HTTP_STATUS) {
+            const char *reason = ai_config_is_deepseek(&config) ? deepseek_status_text(app_services_chat_status_code()) : NULL;
+            if (reason) set_note(reason);
+            else snprintf(note, sizeof(note), "HTTP %d", app_services_chat_status_code());
+        } else set_note(stream_error_text(app_services_chat_error()));
     }
     transcript_dirty = true;
 }
@@ -264,6 +277,12 @@ static void send(void) {
     if (!config.model[0]) { set_note("set a model (F5)"); return; }
     if (!config.host[0]) { set_note("set host (F5)"); return; }
     if (app_services_wifi_state() != WIFI_STATE_ONLINE) { set_note("Wi-Fi not online"); return; }
+    /* DeepSeek is refused here, before anything is sent, until it has a key
+     * and the clock has been set over the network (certificates need it). */
+    if (ai_config_is_deepseek(&config) && app_services_deepseek_ready() != DEEPSEEK_START_OK) {
+        set_note(deepseek_provider_start_text(app_services_deepseek_ready()));
+        return;
+    }
     if (app_services_chat_active()) { set_note("busy"); return; }
     if (chat_model_submit(&chat) != 0) { set_note("message too long"); return; }
 
@@ -319,19 +338,26 @@ static void explain_rejection(chat_setting_t field, ai_config_status_t status) {
 }
 
 /* Prompt for one field and store it in target if it validates.  Every field,
- * the Wi-Fi password included, is shown as it is typed; the typed value is
- * wiped afterwards because it may be that password. */
+ * the Wi-Fi password included, is shown as it is typed, except the API key,
+ * which is echoed as asterisks; the typed value is wiped afterwards because
+ * it may be either secret. */
 static bool edit_setting(ai_config_t *target, chat_setting_t field) {
     char value[UI_INPUT_MAX + 1], title[24];
     unsigned flags = UI_INPUT_ANY_CHAR;
     ai_config_status_t status;
 
+    bool stored_key;
+
     if (chat_settings_allows_empty(field)) flags |= UI_INPUT_ALLOW_EMPTY;
+    if (field == CHAT_SETTING_API_KEY) flags |= UI_INPUT_MASKED;
     snprintf(title, sizeof(title), " %s ", chat_settings_label(field));
-    if (!ui_show_input_dialog(title, value, sizeof(value), flags)) return false;
+    if (!ui_show_input_dialog(title, value, sizeof(value), flags)) { memset(value, 0, sizeof(value)); return false; }
     status = chat_settings_set(target, field, value);
+    stored_key = field == CHAT_SETTING_API_KEY && status == AI_CONFIG_OK && value[0] != '\0';
     memset(value, 0, sizeof(value));
     if (status != AI_CONFIG_OK) { explain_rejection(field, status); return false; }
+    /* ai.ini is plain text: anyone holding the card can read the key. */
+    if (stored_key) notice(" API KEY ", " Kept unencrypted on SD ");
     return true;
 }
 
@@ -386,6 +412,25 @@ static void ssid_menu(ai_config_t *target) {
     else if (sel == 1) edit_setting(target, CHAT_SETTING_SSID);
 }
 
+/* Choose the provider.  Changing it also moves the host, port and model to
+ * the new provider's own (see ai_config_set_provider). */
+static bool pick_provider(ai_config_t *target) {
+    static const char *const labels[] = {" ollama ", " deepseek "};
+    static const char *const names[] = {AI_CONFIG_PROVIDER_OLLAMA, AI_CONFIG_PROVIDER_DEEPSEEK};
+    int sel = menu(" PROVIDER ", labels, 2, ai_config_is_deepseek(target) ? 1 : 0);
+    if (sel < 0 || strcmp(target->provider, names[sel]) == 0) return false;
+    return chat_settings_set(target, CHAT_SETTING_PROVIDER, names[sel]) == AI_CONFIG_OK;
+}
+
+/* DeepSeek only has these models, so they are picked, not typed. */
+static bool pick_deepseek_model(ai_config_t *target) {
+    static const char *const labels[] = {" " AI_CONFIG_DEEPSEEK_MODEL_DEFAULT " ", " " AI_CONFIG_DEEPSEEK_MODEL_REASONER " "};
+    static const char *const names[] = {AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, AI_CONFIG_DEEPSEEK_MODEL_REASONER};
+    int sel = menu(" MODEL ", labels, 2, strcmp(target->model, names[1]) == 0 ? 1 : 0);
+    if (sel < 0 || strcmp(target->model, names[sel]) == 0) return false;
+    return chat_settings_set(target, CHAT_SETTING_MODEL, names[sel]) == AI_CONFIG_OK;
+}
+
 static void settings_menu(void) {
     const char *labels[CHAT_SETTING_COUNT + 1];
     int sel = 0;
@@ -400,18 +445,12 @@ static void settings_menu(void) {
         sel = menu(" CHAT SETTINGS ", labels, CHAT_SETTING_COUNT + 1, sel);
         if (sel < 0) break;
         if (sel == CHAT_SETTING_COUNT) { config = draft; apply_config(); break; }
-        if (sel == CHAT_SETTING_PROVIDER) continue; /* chosen from the chat menu; only ollama exists */
-        if (sel == CHAT_SETTING_SSID) ssid_menu(&draft);
+        if (sel == CHAT_SETTING_PROVIDER) pick_provider(&draft);
+        else if (sel == CHAT_SETTING_MODEL && ai_config_is_deepseek(&draft)) pick_deepseek_model(&draft);
+        else if (sel == CHAT_SETTING_SSID) ssid_menu(&draft);
         else edit_setting(&draft, (chat_setting_t)sel);
     }
     memset(&draft, 0, sizeof(draft));
-}
-
-static void provider_menu(void) {
-    static const char *const providers[] = {" ollama "};
-    if (menu(" PROVIDER ", providers, 1, 0) != 0) return;
-    if (strcmp(config.provider, "ollama") == 0) return;
-    if (chat_settings_set(&config, CHAT_SETTING_PROVIDER, "ollama") == AI_CONFIG_OK) apply_config();
 }
 
 static void make_auto_title(const char *src, size_t src_len, char *dst, size_t dst_cap) {
@@ -578,8 +617,11 @@ static void chat_menu(void) {
         labels[3] = " Conversations ";
         labels[4] = " New chat ";
         sel = menu(" CHAT ", labels, 5, sel);
-        if (sel == 0) { if (edit_setting(&config, CHAT_SETTING_MODEL)) apply_config(); }
-        else if (sel == 1) provider_menu();
+        if (sel == 0) {
+            if (ai_config_is_deepseek(&config) ? pick_deepseek_model(&config) : edit_setting(&config, CHAT_SETTING_MODEL))
+                apply_config();
+        }
+        else if (sel == 1) { if (pick_provider(&config)) apply_config(); }
         else if (sel == 2) settings_menu();
         else if (sel == 3) { if (conversations_menu()) break; }
         else if (sel == 4) { cancel_reply(); chat_model_reset(&chat); note[0] = '\0'; scroll = 0; break; }

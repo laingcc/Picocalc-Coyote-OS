@@ -5,16 +5,29 @@
 
 #include "pico/time.h"
 
+#include "time/time_service.h"
+
 #ifndef COYOTE_HAS_WIFI
 #define COYOTE_HAS_WIFI 0
 #endif
 
 #if COYOTE_HAS_WIFI
 #include "pico/cyw43_arch.h"
+#include "lwip/altcp.h"
+#include "lwip/altcp_tcp.h"
+#include "lwip/altcp_tls.h"
+#include "lwip/apps/altcp_tls_mbedtls_opts.h"
 #include "lwip/dns.h"
 #include "lwip/ip_addr.h"
 #include "lwip/pbuf.h"
-#include "lwip/tcp.h"
+#include "mbedtls/ssl.h"
+#include "tls/tls_trust.h"
+
+/* lwIP's TLS layer takes its verification mode from this build option, and
+ * defaults it to "optional", which would complete a handshake with a peer
+ * whose certificate failed.  Refuse to build that way. */
+_Static_assert(ALTCP_MBEDTLS_AUTHMODE == MBEDTLS_SSL_VERIFY_REQUIRED,
+               "TLS peer verification must be mandatory");
 #endif
 
 /* All service state is static: these objects are far too large for a stack. */
@@ -26,6 +39,7 @@ static struct {
     wifi_scan_t scan;
     http_stream_t stream;
     ollama_provider_t provider;
+    deepseek_provider_t deepseek;
     provider_event_callback_t callback;
     void *callback_context;
 } services;
@@ -146,36 +160,48 @@ static void scan_settle(void) {
     }
 }
 
-/* ---- lwIP raw DNS/TCP adapter ------------------------------------------ */
+/* ---- lwIP DNS and altcp (TCP or TLS) adapter ----------------------------- */
 
 /*
  * One connection at a time.  net.pcb is non-NULL exactly while lwIP holds a
  * PCB whose callbacks point at us; it is cleared before the PCB is closed or
- * aborted and by the error callback, where lwIP has already freed it.
+ * aborted and by the error callback, where lwIP has already freed it (or, for
+ * a failed TLS handshake, frees it as soon as the callback returns).
  *
  * lwIP requires a callback that aborted its own PCB to return ERR_ABRT, so
  * each callback clears net.aborted on entry and reports it on exit.
+ *
+ * The PCB is an altcp one so that a plain and a TLS connection are driven by
+ * the same callbacks.  Which it is, is decided only by which adapter the
+ * stream called: net_tcp_connect makes a plain PCB, net_tls_connect a TLS
+ * one, and neither ever falls back to the other.
  *
  * With pico_cyw43_arch_lwip_poll every lwIP callback runs inside
  * cyw43_arch_poll on the main loop, the same context that calls into lwIP
  * from here, so no locking is needed.
  */
 static struct {
-    struct tcp_pcb *pcb;
+    struct altcp_pcb *pcb;
     ip_addr_t address;
     uintptr_t dns_generation;
     bool aborted;
+    bool tls; /* pcb is a TLS connection */
+    /* Trust anchors and RNG for TLS, held from the first TLS connect until
+     * net_tls_reap finds the transport idle.  mbedTLS allocates these, like
+     * everything else it needs, from lwIP's fixed heap (MEM_SIZE), never the
+     * C heap. */
+    struct altcp_tls_config *tls_config;
 } net;
 
-static void net_detach(struct tcp_pcb *pcb) {
-    tcp_arg(pcb, NULL);
-    tcp_recv(pcb, NULL);
-    tcp_sent(pcb, NULL);
-    tcp_err(pcb, NULL);
+static void net_detach(struct altcp_pcb *pcb) {
+    altcp_arg(pcb, NULL);
+    altcp_recv(pcb, NULL);
+    altcp_sent(pcb, NULL);
+    altcp_err(pcb, NULL);
 }
 
 static void net_tcp_abort(void *context) {
-    struct tcp_pcb *pcb = net.pcb;
+    struct altcp_pcb *pcb = net.pcb;
     (void)context;
     if (pcb == NULL) {
         return;
@@ -183,21 +209,21 @@ static void net_tcp_abort(void *context) {
     net.pcb = NULL;
     net.aborted = true;
     net_detach(pcb);
-    tcp_abort(pcb);
+    altcp_abort(pcb);
 }
 
 static void net_tcp_close(void *context) {
-    struct tcp_pcb *pcb = net.pcb;
+    struct altcp_pcb *pcb = net.pcb;
     (void)context;
     if (pcb == NULL) {
         return;
     }
     net.pcb = NULL;
     net_detach(pcb);
-    if (tcp_close(pcb) != ERR_OK) {
+    if (altcp_close(pcb) != ERR_OK) {
         /* No memory for the FIN: drop the connection rather than leak it. */
         net.aborted = true;
-        tcp_abort(pcb);
+        altcp_abort(pcb);
     }
 }
 
@@ -205,15 +231,28 @@ static err_t net_callback_result(void) {
     return net.aborted ? ERR_ABRT : ERR_OK;
 }
 
-static err_t net_on_connected(void *arg, struct tcp_pcb *pcb, err_t err) {
+/* The handshake is over and the certificate chain and host name verified.
+ * With verification mandatory a handshake cannot complete otherwise; this is
+ * checked again here so that no request byte depends on that alone. */
+static bool net_tls_verified(struct altcp_pcb *pcb) {
+    mbedtls_ssl_context *ssl = (mbedtls_ssl_context *)altcp_tls_context(pcb);
+    return ssl != NULL && mbedtls_ssl_is_handshake_over(ssl) && mbedtls_ssl_get_verify_result(ssl) == 0u;
+}
+
+/* For a TLS connection lwIP calls this only once the handshake has finished. */
+static err_t net_on_connected(void *arg, struct altcp_pcb *pcb, err_t err) {
+    bool connected = err == ERR_OK;
     (void)arg;
-    (void)pcb;
     net.aborted = false;
-    http_stream_on_connected(&services.stream, err == ERR_OK);
+    if (connected && net.tls) {
+        connected = net_tls_verified(pcb);
+    }
+    /* On failure the stream aborts the PCB through net_tcp_abort. */
+    http_stream_on_connected(&services.stream, connected);
     return net_callback_result();
 }
 
-static err_t net_on_sent(void *arg, struct tcp_pcb *pcb, u16_t length) {
+static err_t net_on_sent(void *arg, struct altcp_pcb *pcb, u16_t length) {
     (void)arg;
     (void)pcb;
     net.aborted = false;
@@ -221,7 +260,7 @@ static err_t net_on_sent(void *arg, struct tcp_pcb *pcb, u16_t length) {
     return net_callback_result();
 }
 
-static err_t net_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
+static err_t net_on_recv(void *arg, struct altcp_pcb *pcb, struct pbuf *p, err_t err) {
     struct pbuf *q;
     (void)arg;
     net.aborted = false;
@@ -245,16 +284,18 @@ static err_t net_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t e
         http_stream_on_recv(&services.stream, (const char *)q->payload, q->len);
     }
     if (net.pcb == pcb) {
-        tcp_recved(pcb, p->tot_len);
+        altcp_recved(pcb, p->tot_len);
     }
     pbuf_free(p);
     return net_callback_result();
 }
 
+/* The connection is gone: reset, refused, out of memory, or a TLS handshake
+ * that failed (bad certificate, wrong host, no usable clock).  lwIP frees the
+ * PCB itself, so it is only forgotten here, never closed. */
 static void net_on_error(void *arg, err_t err) {
     (void)arg;
     (void)err;
-    /* lwIP has already freed the PCB. */
     net.pcb = NULL;
     http_stream_on_error(&services.stream);
 }
@@ -283,27 +324,84 @@ static int net_dns_resolve(void *context, const char *host) {
     return err == ERR_INPROGRESS ? HTTP_STREAM_IO_PENDING : HTTP_STREAM_IO_ERROR;
 }
 
+/* Attach the callbacks and start connecting; on failure the PCB is freed. */
+static int net_connect(struct altcp_pcb *pcb, uint16_t port, bool tls) {
+    altcp_arg(pcb, NULL);
+    altcp_recv(pcb, net_on_recv);
+    altcp_sent(pcb, net_on_sent);
+    altcp_err(pcb, net_on_error);
+    if (altcp_connect(pcb, &net.address, port, net_on_connected) != ERR_OK) {
+        net_detach(pcb);
+        altcp_abort(pcb);
+        return HTTP_STREAM_IO_ERROR;
+    }
+    net.pcb = pcb;
+    net.tls = tls;
+    return HTTP_STREAM_IO_PENDING;
+}
+
 static int net_tcp_connect(void *context, uint16_t port) {
-    struct tcp_pcb *pcb;
+    struct altcp_pcb *pcb;
     (void)context;
     if (net.pcb != NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
-    pcb = tcp_new_ip_type(IP_GET_TYPE(&net.address));
+    pcb = altcp_tcp_new_ip_type(IP_GET_TYPE(&net.address));
     if (pcb == NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
-    tcp_arg(pcb, NULL);
-    tcp_recv(pcb, net_on_recv);
-    tcp_sent(pcb, net_on_sent);
-    tcp_err(pcb, net_on_error);
-    if (tcp_connect(pcb, &net.address, port, net_on_connected) != ERR_OK) {
-        net_detach(pcb);
-        tcp_abort(pcb);
+    return net_connect(pcb, port, false);
+}
+
+/*
+ * Open a TLS connection that verifies the peer against the embedded roots
+ * (tls_trust.c) and against host.  Every step is required: if the trust
+ * anchors cannot be loaded, the PCB cannot be made, or the host name cannot be
+ * set, no connection is attempted at all.
+ *
+ * The certificate dates are checked against the clock mbedTLS is built to use
+ * (tls/tls_clock.c), which only knows the time once SNTP has set it.
+ */
+static int net_tls_connect(void *context, const char *host, uint16_t port) {
+    struct altcp_pcb *pcb;
+    mbedtls_ssl_context *ssl;
+    (void)context;
+
+    if (net.pcb != NULL || host == NULL || host[0] == '\0') {
         return HTTP_STREAM_IO_ERROR;
     }
-    net.pcb = pcb;
-    return HTTP_STREAM_IO_PENDING;
+    if (net.tls_config == NULL) {
+        net.tls_config = altcp_tls_create_config_client(tls_trust_pem, tls_trust_pem_length);
+        if (net.tls_config == NULL) {
+            return HTTP_STREAM_IO_ERROR;
+        }
+    }
+    pcb = altcp_tls_new(net.tls_config, IP_GET_TYPE(&net.address));
+    if (pcb == NULL) {
+        return HTTP_STREAM_IO_ERROR;
+    }
+    /* The host name is both the SNI sent to the server and the name its
+     * certificate must carry; without it mbedTLS would accept a valid
+     * certificate for any host.  The authentication mode is already REQUIRED
+     * (see the assertion above) and is set again on this connection's
+     * configuration so that it does not rest on a build option alone. */
+    ssl = (mbedtls_ssl_context *)altcp_tls_context(pcb);
+    if (ssl == NULL || ssl->MBEDTLS_PRIVATE(conf) == NULL || mbedtls_ssl_set_hostname(ssl, host) != 0) {
+        altcp_abort(pcb);
+        return HTTP_STREAM_IO_ERROR;
+    }
+    mbedtls_ssl_conf_authmode((mbedtls_ssl_config *)ssl->MBEDTLS_PRIVATE(conf), MBEDTLS_SSL_VERIFY_REQUIRED);
+    return net_connect(pcb, port, true);
+}
+
+/* Free the TLS configuration once nothing can still be using it.  This runs
+ * from the main loop, never from an lwIP callback: after a failed handshake
+ * lwIP is still tearing the connection down when it reports the error. */
+static void net_tls_reap(void) {
+    if (net.tls_config != NULL && net.pcb == NULL && !http_stream_is_active(&services.stream)) {
+        altcp_tls_free_config(net.tls_config);
+        net.tls_config = NULL;
+    }
 }
 
 static int net_tcp_write(void *context, const char *data, size_t length) {
@@ -313,23 +411,25 @@ static int net_tcp_write(void *context, const char *data, size_t length) {
     if (net.pcb == NULL) {
         return HTTP_STREAM_IO_ERROR;
     }
-    room = tcp_sndbuf(net.pcb);
+    room = altcp_sndbuf(net.pcb);
     if (length > room) {
         length = room;
     }
     if (length == 0u) {
         return 0;
     }
-    err = tcp_write(net.pcb, data, (u16_t)length, TCP_WRITE_FLAG_COPY);
+    err = altcp_write(net.pcb, data, (u16_t)length, TCP_WRITE_FLAG_COPY);
     if (err == ERR_MEM) {
         return 0; /* no segment memory yet: retried after an ack or on poll */
     }
     if (err != ERR_OK) {
         return HTTP_STREAM_IO_ERROR;
     }
-    tcp_output(net.pcb);
+    altcp_output(net.pcb);
     return (int)length;
 }
+
+#define NET_TLS_CONNECT net_tls_connect
 
 static void platform_poll(void) {
     if (wifi_manager_radio_powered(&services.wifi) || scan_radio) {
@@ -402,6 +502,12 @@ static void net_tcp_abort(void *context) {
     (void)context;
 }
 
+/* No TLS adapter: the stream refuses to start a TLS request without one. */
+#define NET_TLS_CONNECT NULL
+
+static void net_tls_reap(void) {
+}
+
 static void platform_poll(void) {
 }
 
@@ -417,7 +523,7 @@ static const wifi_scan_ops_t scan_ops = {
 
 static const http_stream_ops_t stream_ops = {
     platform_clock_ms, platform_link_up, net_dns_resolve, net_tcp_connect,
-    net_tcp_write, net_tcp_close, net_tcp_abort,
+    net_tcp_write, net_tcp_close, net_tcp_abort, NET_TLS_CONNECT,
 };
 
 /* ---- Provider binding --------------------------------------------------- */
@@ -428,6 +534,22 @@ static int sink_feed(void *context, const char *data, size_t length) {
 
 static int sink_finish(void *context) {
     return ollama_provider_finish((ollama_provider_t *)context);
+}
+
+/* DeepSeek answers an error status (a bad key, no balance, rate limiting)
+ * with a body that is not an event stream.  It is dropped unread: the stream
+ * reports the status itself. */
+static bool deepseek_status_ok(void) {
+    int status = http_stream_status_code(&services.stream);
+    return status >= 200 && status <= 299;
+}
+
+static int deepseek_sink_feed(void *context, const char *data, size_t length) {
+    return deepseek_status_ok() ? deepseek_provider_feed((deepseek_provider_t *)context, data, length) : 0;
+}
+
+static int deepseek_sink_finish(void *context) {
+    return deepseek_status_ok() ? deepseek_provider_finish((deepseek_provider_t *)context) : 0;
 }
 
 /* One received segment can decode into several events.  Once the chat has been
@@ -449,6 +571,7 @@ void app_services_init(void) {
     wifi_scan_init(&services.scan, &scan_ops, NULL);
     http_stream_init(&services.stream, &stream_ops, NULL);
     ollama_provider_init(&services.provider, on_provider_event, NULL);
+    deepseek_provider_init(&services.deepseek, on_provider_event, NULL);
     services.initialised = true;
 }
 
@@ -461,6 +584,7 @@ void app_services_poll(void) {
     wifi_manager_poll(&services.wifi);
     app_services_wifi_scan_poll();
     http_stream_poll(&services.stream);
+    net_tls_reap();
     services.polling = false;
 }
 
@@ -523,6 +647,50 @@ int app_services_wifi_scan_at(size_t i, char *ssid_buf, int *rssi) {
     return 0;
 }
 
+deepseek_start_t app_services_deepseek_ready(void) {
+    uint32_t now;
+    return deepseek_provider_start_check(&services.config, services.initialised && time_service_trusted_now(&now));
+}
+
+/*
+ * The DeepSeek request: always TLS, always to the fixed DeepSeek endpoint
+ * (never to the configured host, which start_check has in any case confirmed
+ * is the same), with the API key as the bearer token.  It is refused before
+ * any network activity unless the configuration is complete and the clock has
+ * been set by SNTP since boot.
+ */
+static int chat_start_deepseek(const ollama_message_t *messages, size_t message_count) {
+    http_stream_request_t request;
+
+    if (app_services_deepseek_ready() != DEEPSEEK_START_OK) {
+        return -1;
+    }
+    deepseek_provider_init(&services.deepseek, on_provider_event, NULL);
+    if (deepseek_provider_build_request(&services.deepseek, services.config.model, messages, message_count,
+                                        (int)services.config.max_predict,
+                                        services.config.system_prompt,
+                                        (int)services.config.temperature) != 0) {
+        return -1;
+    }
+
+    memset(&request, 0, sizeof(request));
+    request.host = AI_CONFIG_DEEPSEEK_HOST;
+    request.port = AI_CONFIG_DEEPSEEK_PORT;
+    request.tls = true;
+    request.bearer_token = services.config.bearer_token;
+    request.method = deepseek_provider_method();
+    request.path = deepseek_provider_path();
+    request.content_type = deepseek_provider_content_type();
+    request.body = deepseek_provider_request(&services.deepseek);
+    request.sink.feed = deepseek_sink_feed;
+    request.sink.finish = deepseek_sink_finish;
+    request.sink.context = &services.deepseek;
+    request.connect_timeout_ms = services.config.connect_timeout_ms;
+    request.idle_timeout_ms = services.config.idle_timeout_ms;
+    request.request_timeout_ms = services.config.request_timeout_ms;
+    return http_stream_start(&services.stream, &request);
+}
+
 int app_services_chat_start(const ollama_message_t *messages,
                             size_t message_count,
                             provider_event_callback_t callback,
@@ -530,12 +698,18 @@ int app_services_chat_start(const ollama_message_t *messages,
     http_stream_request_t request;
 
     if (!services.initialised || http_stream_is_active(&services.stream) ||
-        !wifi_manager_is_online(&services.wifi) || strcmp(services.config.provider, "ollama") != 0) {
+        !wifi_manager_is_online(&services.wifi)) {
         return -1;
     }
 
     services.callback = callback;
     services.callback_context = context;
+    if (ai_config_is_deepseek(&services.config)) {
+        return chat_start_deepseek(messages, message_count);
+    }
+    if (strcmp(services.config.provider, AI_CONFIG_PROVIDER_OLLAMA) != 0) {
+        return -1;
+    }
     ollama_provider_init(&services.provider, on_provider_event, NULL);
     if (ollama_provider_build_request(&services.provider, services.config.model, messages, message_count,
                                       (int)services.config.max_predict,

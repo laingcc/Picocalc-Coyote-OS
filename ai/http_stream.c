@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ai/ai_config.h"
+
 static bool is_active_state(http_stream_state_t state) {
     return state != HTTP_STREAM_IDLE && state != HTTP_STREAM_DONE && state != HTTP_STREAM_ERROR;
 }
@@ -29,6 +31,16 @@ static void release_connection(http_stream_t *stream, bool graceful) {
     }
 }
 
+/* The request head can hold a bearer token: do not keep it once it has been
+ * handed to the stack, or after the request has ended. */
+static void scrub_head(http_stream_t *stream) {
+    volatile char *p = stream->head;
+    size_t i;
+    for (i = 0u; i < sizeof(stream->head); i++) {
+        p[i] = '\0';
+    }
+}
+
 /* Latch the terminal state before releasing the connection so nothing the
  * adapter does on the way out can be mistaken for progress. */
 static void fail(http_stream_t *stream, http_stream_error_t error) {
@@ -37,6 +49,8 @@ static void fail(http_stream_t *stream, http_stream_error_t error) {
     }
     stream->state = HTTP_STREAM_ERROR;
     stream->error = error;
+    stream->tls_host = NULL;
+    scrub_head(stream);
     release_connection(stream, false);
 }
 
@@ -53,6 +67,7 @@ static void complete(http_stream_t *stream) {
         fail(stream, HTTP_STREAM_ERROR_SINK);
     } else {
         stream->state = HTTP_STREAM_DONE;
+        scrub_head(stream);
         release_connection(stream, true);
     }
 }
@@ -117,11 +132,24 @@ static void pump_send(http_stream_t *stream) {
             return; /* send buffer full: wait for an ack or the next poll */
         }
         stream->queued += (size_t)written;
+        if (stream->queued >= stream->head_length && stream->queued - (size_t)written < stream->head_length) {
+            scrub_head(stream);
+        }
     }
 }
 
+/* A TLS request is only ever connected through tls_connect.  There is
+ * deliberately no branch from its failure to tcp_connect. */
 static void begin_connect(http_stream_t *stream) {
-    if (stream->ops->tcp_connect(stream->ops_context, stream->port) != HTTP_STREAM_IO_PENDING) {
+    if (stream->tls) {
+        const char *host = stream->tls_host;
+        stream->tls_host = NULL;
+        if (stream->ops->tls_connect == NULL || host == NULL ||
+            stream->ops->tls_connect(stream->ops_context, host, stream->port) != HTTP_STREAM_IO_PENDING) {
+            fail(stream, HTTP_STREAM_ERROR_TLS);
+            return;
+        }
+    } else if (stream->ops->tcp_connect(stream->ops_context, stream->port) != HTTP_STREAM_IO_PENDING) {
         fail(stream, HTTP_STREAM_ERROR_CONNECT);
         return;
     }
@@ -160,6 +188,7 @@ void http_stream_init(http_stream_t *stream, const http_stream_ops_t *ops, void 
 }
 
 int http_stream_start(http_stream_t *stream, const http_stream_request_t *request) {
+    char port_text[8];
     size_t body_length;
     int head_length;
     int resolved;
@@ -173,18 +202,34 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
         request->sink.feed == NULL) {
         return -1;
     }
+    /* TLS needs its adapter; a credential needs TLS and a header-safe form. */
+    if (request->tls && stream->ops->tls_connect == NULL) {
+        return -1;
+    }
+    if (request->bearer_token != NULL && (!request->tls || !ai_config_bearer_token_valid(request->bearer_token))) {
+        return -1;
+    }
 
+    port_text[0] = '\0';
+    if (!request->tls || request->port != 443u) {
+        snprintf(port_text, sizeof(port_text), ":%u", (unsigned)request->port);
+    }
     body_length = request->body.length(request->body.context);
     head_length = snprintf(stream->head, sizeof(stream->head),
                            "%s %s HTTP/1.1\r\n"
-                           "Host: %s:%u\r\n"
+                           "Host: %s%s\r\n"
+                           "%s%s%s"
                            "Content-Type: %s\r\n"
                            "Content-Length: %lu\r\n"
                            "Connection: close\r\n"
                            "\r\n",
-                           request->method, request->path, request->host, (unsigned)request->port,
+                           request->method, request->path, request->host, port_text,
+                           request->bearer_token != NULL ? "Authorization: Bearer " : "",
+                           request->bearer_token != NULL ? request->bearer_token : "",
+                           request->bearer_token != NULL ? "\r\n" : "",
                            request->content_type, (unsigned long)body_length);
     if (head_length <= 0 || (size_t)head_length >= sizeof(stream->head)) {
+        scrub_head(stream);
         return -1;
     }
 
@@ -200,6 +245,8 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
     stream->acked = 0u;
     stream->status_code = 0;
     stream->connection_open = false;
+    stream->tls = request->tls;
+    stream->tls_host = request->tls ? request->host : NULL;
     stream->error = HTTP_STREAM_ERROR_NONE;
     stream->started_ms = now_ms(stream);
     stream->activity_ms = stream->started_ms;
@@ -280,7 +327,7 @@ void http_stream_on_connected(http_stream_t *stream, bool connected) {
         return;
     }
     if (!connected) {
-        fail(stream, HTTP_STREAM_ERROR_CONNECT);
+        fail(stream, stream->tls ? HTTP_STREAM_ERROR_TLS : HTTP_STREAM_ERROR_CONNECT);
         return;
     }
     stream->state = HTTP_STREAM_SENDING;
@@ -351,8 +398,11 @@ void http_stream_on_error(http_stream_t *stream) {
     }
     /* The stack has already freed the connection: there is nothing to abort. */
     stream->connection_open = false;
-    fail(stream, stream->state == HTTP_STREAM_CONNECTING ? HTTP_STREAM_ERROR_CONNECT
-                                                         : HTTP_STREAM_ERROR_REMOTE_CLOSED);
+    if (stream->state != HTTP_STREAM_CONNECTING) {
+        fail(stream, HTTP_STREAM_ERROR_REMOTE_CLOSED);
+    } else {
+        fail(stream, stream->tls ? HTTP_STREAM_ERROR_TLS : HTTP_STREAM_ERROR_CONNECT);
+    }
 }
 
 http_stream_state_t http_stream_state(const http_stream_t *stream) {

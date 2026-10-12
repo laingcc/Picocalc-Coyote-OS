@@ -130,6 +130,10 @@ bool time_service_now(uint32_t *epoch) {
     return service.initialised && time_sync_now(&service.sync, epoch);
 }
 
+bool time_service_trusted_now(uint32_t *epoch) {
+    return service.initialised && time_sync_trusted_now(&service.sync, epoch);
+}
+
 int time_service_label(int utc_offset_minutes, char *buffer, size_t capacity) {
     if (!service.initialised) {
         if (buffer != NULL && capacity > 0u) {

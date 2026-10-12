@@ -271,6 +271,105 @@ static void check_temperature(void) {
     CHECK_STR_EQ(out, "0.80");
 }
 
+static void check_deepseek_provider(void) {
+    ai_config_t config;
+    char out[64];
+
+    ai_config_init(&config);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_OK);
+
+    /* Choosing DeepSeek brings its endpoint and default model with it. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "deepseek");
+    CHECK_STR_EQ(config.host, "api.deepseek.com");
+    CHECK(config.port == 443u);
+    CHECK_STR_EQ(config.model, "deepseek-chat");
+    chat_settings_format(&config, CHAT_SETTING_PROVIDER, out, sizeof(out));
+    CHECK_STR_EQ(out, "deepseek");
+
+    /* While it is chosen the endpoint is fixed... */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "evil.example") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PORT, "80") == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(config.host, "api.deepseek.com");
+    CHECK(config.port == 443u);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "api.deepseek.com") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PORT, "443") == AI_CONFIG_OK);
+
+    /* ...and the model is one of the known two. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "deepseek-reasoner") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.model, "deepseek-reasoner");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "deepseek-chat ") == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(config.model, "deepseek-reasoner");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "deepseek-chat") == AI_CONFIG_OK);
+
+    /* Unrelated fields still edit normally. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, "Home Net") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MAX_PREDICT, "512") == AI_CONFIG_OK);
+    CHECK(config.max_predict == 512u);
+
+    /* Back to Ollama: DeepSeek's host, port and model do not come along. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "");
+    CHECK(config.port == 11434u);
+    CHECK_STR_EQ(config.model, "");
+    CHECK_STR_EQ(config.ssid, "Home Net");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_OK);
+    /* Muse is still not selectable here, as before. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+}
+
+static void check_api_key_is_never_shown(void) {
+    static const char key[] = "sk-0000000000000000000000000000test"; /* made up */
+    ai_config_t config;
+    char out[64];
+    size_t field;
+
+    ai_config_init(&config);
+    CHECK_STR_EQ(chat_settings_label(CHAT_SETTING_API_KEY), "API key");
+    CHECK(chat_settings_is_secret(CHAT_SETTING_API_KEY));
+    CHECK(chat_settings_allows_empty(CHAT_SETTING_API_KEY));
+
+    CHECK(chat_settings_format(&config, CHAT_SETTING_API_KEY, out, sizeof(out)) == 0u);
+    CHECK_STR_EQ(out, "");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, key) == AI_CONFIG_OK);
+    /* Stored in the one existing token field, not a second one. */
+    CHECK_STR_EQ(config.bearer_token, key);
+
+    /* No field's display value contains the key or gives away its length. */
+    for (field = 0u; field < CHAT_SETTING_COUNT; field++) {
+        chat_settings_format(&config, (chat_setting_t)field, out, sizeof(out));
+        CHECK(strstr(out, "sk-") == NULL);
+    }
+    chat_settings_format(&config, CHAT_SETTING_API_KEY, out, sizeof(out));
+    CHECK_STR_EQ(out, "********");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "k") == AI_CONFIG_OK);
+    chat_settings_format(&config, CHAT_SETTING_API_KEY, out, sizeof(out));
+    CHECK_STR_EQ(out, "********");
+
+    /* Only text that is safe in an Authorization header is accepted. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "sk with space") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "sk-a\r\nX-Injected: 1") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "sk-\"q\"") == AI_CONFIG_INVALID_VALUE);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "sk=mid") == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(config.bearer_token, "k");
+    {
+        char longest[AI_CONFIG_BEARER_TOKEN_CAPACITY + 1u];
+        memset(longest, 'k', sizeof(longest) - 1u);
+        longest[sizeof(longest) - 1u] = '\0';
+        CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, longest) != AI_CONFIG_OK);
+        longest[AI_CONFIG_BEARER_TOKEN_CAPACITY - 1u] = '\0';
+        CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, longest) == AI_CONFIG_OK);
+    }
+
+    /* It can be cleared. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+}
+
 void test_chat_settings(void) {
     check_labels();
     check_text_fields();
@@ -279,4 +378,6 @@ void test_chat_settings(void) {
     check_password_is_never_shown();
     check_arguments_and_truncation();
     check_temperature();
+    check_deepseek_provider();
+    check_api_key_is_never_shown();
 }

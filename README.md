@@ -3,7 +3,7 @@
 Calculator firmware for the [PicoCalc](https://www.clockworkpi.com/picocalc) kit, targeting the
 Raspberry Pi Pico 2 W (RP2350). It is a graphing calculator and text editor with a
 keyboard-driven AI chat mode that streams replies from an [Ollama](https://ollama.com) host on
-the local network.
+the local network, or directly from [DeepSeek](https://api-docs.deepseek.com) over verified TLS.
 
 ![calculator mode](/assets/scr_000.bmp)
 
@@ -114,15 +114,57 @@ defaults. Without an SD card the settings still apply, but only until power-off.
 Ollama listens on `127.0.0.1` by default; start it with `OLLAMA_HOST=0.0.0.0` so the PicoCalc
 can reach it.
 
+## DeepSeek
+
+The firmware can talk to DeepSeek itself: no bridge or other machine is involved.
+
+1. Join Wi-Fi as above.
+2. Press F5 in Chat, select **Provider** and choose **deepseek**. Host, port and model change
+   to `api.deepseek.com`, `443` and `deepseek-chat`.
+3. Press F5, **Connection settings**, **API key**, and type your DeepSeek key. It is echoed as
+   asterisks and shown as `********` afterwards. Choose **Apply & connect**.
+4. Wait for the clock in the status bar to show a time without a `?`, then send a message.
+
+**Model** offers `deepseek-chat` and `deepseek-reasoner`; no other value is accepted. The
+reasoner's thinking is not shown, only its answer, and it counts against **Max predict**, so
+raise that if replies come back empty.
+
+What to know about it:
+
+- **The API key is stored in plain text** as `bearer_token` in `/coyote/ai.ini`. Anyone who can
+  take the SD card can read it. Use a key you can revoke, with a spending limit.
+- The connection is TLS 1.2 to `api.deepseek.com:443` only. The server's certificate chain and
+  host name are always verified, against the Amazon Trust Services roots built into the
+  firmware (`tls/tls_trust.c`). There is no setting to relax this and no plain-HTTP fallback:
+  if TLS cannot be set up or verified the request fails with `secure connection failed`.
+- Certificates can only be checked against the real date, so a message is refused with
+  `clock not synced: wait` until the SNTP client has answered since power-on. A time restored
+  from the SD card (`HH:MM?`) is not enough. This needs UDP port 123 to `pool.ntp.org`.
+- While the provider is `deepseek` the host and port cannot be changed, so the key is never sent
+  anywhere else. Switching back to `ollama` clears the host and model.
+- If DeepSeek moves to a certificate authority other than Amazon's, requests fail until the
+  roots are updated and the firmware rebuilt.
+- `401` shows as `API key rejected`, `402` as `no DeepSeek balance`, `429` as `rate limited`.
+- The TLS handshake does its public-key arithmetic inside the network poll, so the keyboard
+  can be unresponsive for a moment while a request connects.
+
+In `ai.ini` the minimum is:
+
+```
+provider=deepseek
+bearer_token=<your key>
+```
+
 ## Architecture
 
 The firmware is a single super-loop: `main.c` reads a key, dispatches it to the active mode
 (`MODE_CALCULATOR`, `MODE_TEXT`, `MODE_CHAT`), and polls the network. There are no threads and
 no RTOS; lwIP runs in `NO_SYS` mode with raw callbacks, driven from that same loop. The AI stack
-is C11 with fixed-size static storage and makes no heap allocations. The SD card is mounted
+is C11 with fixed-size static storage and makes no heap allocations; mbedTLS allocates from
+lwIP's fixed pool, not the C heap. The SD card is mounted
 read/write as FAT at `/`, and everything Coyote OS writes goes under `/coyote`.
 
-Only `ai/app_services.c` and `time/time_service.c` include Pico SDK or lwIP headers. Every other module in `ai/`
+Only `ai/app_services.c`, `time/time_service.c` and `tls/tls_clock.c` include Pico SDK, lwIP or mbedTLS headers. Every other module in `ai/`
 and `time/` reaches the network through function-pointer adapters, which is what lets the host tests drive
 the transport with fake DNS, TCP and clocks.
 
@@ -135,15 +177,20 @@ the transport with fake DNS, TCP and clocks.
 - `ai/config_store` – loads and saves `ai.ini` through a temporary file and a backup.
 - `ai/provider.h`, `ai/ollama_provider` – provider event interface and the Ollama request
   builder / reply decoder.
+- `ai/deepseek_provider` – the DeepSeek (OpenAI-compatible) request builder, its server-sent
+  event reply decoder, and the checks made before a request may start.
 - `ai/json_stream`, `ai/http_parser` – incremental, allocation-free JSON and HTTP parsers.
 - `ai/http_stream` – the HTTP request state machine: DNS, connect, send, receive, timeouts,
-  cancel.
+  cancel. A TLS request is connected through the TLS adapter or not at all.
 - `ai/wifi_manager` – Wi-Fi station state machine with backoff.
 - `ai/wifi_scan` – collects and de-duplicates scan results.
 - `ai/app_services` – binds the above to CYW43 and lwIP and is polled from the main loop.
 - `time/time_sync` – the clock: carries the synced time forward, decides when SNTP runs and when
   the time is saved, formats `HH:MM` in local time (UTC plus the configured offset).
 - `time/time_service` – binds `time_sync` to the lwIP SNTP client and `/coyote/clock.txt`.
+- `tls/` – the mbedTLS build configuration (`mbedtls_config.h`), the trusted root certificates
+  (`tls_trust.c`) and the clock mbedTLS checks certificate dates against (`tls_clock.c`), which
+  only reports a time once SNTP has set it.
 
 The original plan is in [docs/plans/2026-10-07-pico2w-ai-chat.md](docs/plans/2026-10-07-pico2w-ai-chat.md).
 
@@ -152,19 +199,19 @@ The original plan is in [docs/plans/2026-10-07-pico2w-ai-chat.md](docs/plans/202
 `tools/muse_bridge/` is an optional Python service that runs on a Linux machine, separate from
 the firmware. It wraps the Meta Muse Gadget SDK and exposes it as a streaming HTTP endpoint that
 requires a bearer token and validates and size-limits every request; it binds to `127.0.0.1`
-unless told otherwise. The firmware does not use it yet: Ollama is the only provider compiled
-in. See [tools/muse_bridge/README.md](tools/muse_bridge/README.md).
+unless told otherwise. The firmware does not use it yet: it only talks to Ollama and DeepSeek. See [tools/muse_bridge/README.md](tools/muse_bridge/README.md).
 
 ## Known limitations
 
 - Wi-Fi is WPA2-AES or open only. WPA3 and WPA/TKIP networks are not supported.
 - `.local` host names are resolved with one-shot mDNS queries, which is best-effort. An IP
   address is the reliable value for Host.
-- Requests are plaintext HTTP. Use it only on a LAN you trust.
-- Ollama is the only provider in the firmware.
+- Requests to an Ollama host are plaintext HTTP. Use it only on a LAN you trust.
+- Ollama and DeepSeek are the only providers in the firmware.
 - The clock is UTC only and the NTP server is fixed. With no battery-backed RTC, a time restored
   after a reboot is stale until Wi-Fi comes back.
-- The Wi-Fi password is stored unencrypted in `/coyote/ai.ini` on the SD card.
+- The Wi-Fi password and the DeepSeek API key are stored unencrypted in `/coyote/ai.ini` on the
+  SD card.
 
 ## License
 

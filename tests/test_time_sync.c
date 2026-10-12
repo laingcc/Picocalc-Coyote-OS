@@ -501,6 +501,94 @@ static void test_label_capacity(void) {
     CHECK(time_sync_label(&sync, 0, NULL, 0u) == -1);
 }
 
+/* TLS may only be given a time the network has set since boot. */
+static void test_trusted_time_needs_a_sync(void) {
+    fake_platform_t platform;
+    time_sync_t sync;
+    uint32_t epoch = 7u;
+
+    /* Unset: neither clock answers. */
+    memset(&platform, 0, sizeof(platform));
+    time_sync_init(&sync, &fake_ops, &platform);
+    CHECK(time_sync_state(&sync) == TIME_SYNC_UNSET);
+    CHECK(!time_sync_trusted_now(&sync, &epoch));
+    CHECK(epoch == 7u);
+
+    /* Restored from storage: good enough for the status line, but stale by
+     * however long the unit was off, so not for certificates.  This holds
+     * however long it then runs and while SNTP is merely started. */
+    memset(&platform, 0, sizeof(platform));
+    platform.has_saved = 1;
+    platform.saved = T0;
+    time_sync_init(&sync, &fake_ops, &platform);
+    CHECK(time_sync_state(&sync) == TIME_SYNC_RESTORED);
+    CHECK(time_sync_now(&sync, &epoch));
+    CHECK(epoch == T0);
+    epoch = 7u;
+    CHECK(!time_sync_trusted_now(&sync, &epoch));
+    CHECK(epoch == 7u);
+    time_sync_poll(&sync, true);
+    platform.now_ms = 3600000u;
+    time_sync_poll(&sync, true);
+    CHECK(platform.sntp_starts == 1);
+    CHECK(!time_sync_trusted_now(&sync, &epoch));
+    /* An implausible answer does not count as a sync. */
+    time_sync_on_sntp(&sync, TIME_SYNC_EPOCH_MIN - 1u);
+    CHECK(!time_sync_trusted_now(&sync, &epoch));
+    CHECK(epoch == 7u);
+
+    /* A real answer: trusted from then on, and advancing. */
+    time_sync_on_sntp(&sync, T0 + 86400u);
+    CHECK(time_sync_state(&sync) == TIME_SYNC_SYNCED);
+    CHECK(time_sync_trusted_now(&sync, &epoch));
+    CHECK(epoch == T0 + 86400u);
+    platform.now_ms += 5000u;
+    CHECK(time_sync_trusted_now(&sync, &epoch));
+    CHECK(epoch == T0 + 86400u + 5u);
+    /* Losing the link afterwards does not take the time away. */
+    time_sync_poll(&sync, false);
+    CHECK(time_sync_trusted_now(&sync, &epoch));
+
+    /* A reboot starts over: the time just saved comes back untrusted. */
+    time_sync_init(&sync, &fake_ops, &platform);
+    CHECK(time_sync_state(&sync) == TIME_SYNC_RESTORED);
+    CHECK(!time_sync_trusted_now(&sync, &epoch));
+}
+
+static void check_civil(uint32_t epoch, int year, int month, int day, int hour, int minute, int second) {
+    time_sync_civil_t civil;
+    time_sync_civil(epoch, &civil);
+    CHECK(civil.year == year);
+    CHECK(civil.month == month);
+    CHECK(civil.day == day);
+    CHECK(civil.hour == hour);
+    CHECK(civil.minute == minute);
+    CHECK(civil.second == second);
+}
+
+/* The calendar date certificate validity is compared against. */
+static void test_civil(void) {
+    check_civil(0u, 1970, 1, 1, 0, 0, 0);
+    check_civil(86399u, 1970, 1, 1, 23, 59, 59);
+    check_civil(86400u, 1970, 1, 2, 0, 0, 0);
+    check_civil(T0, 2026, 10, 9, 14, 5, 9);
+    check_civil(TIME_SYNC_EPOCH_MIN, 2025, 1, 1, 0, 0, 0);
+    check_civil(TIME_SYNC_EPOCH_MIN - 1u, 2024, 12, 31, 23, 59, 59);
+    /* Leap days: 2000 was one (divisible by 400), as are 2024 and 2028. */
+    check_civil(951782400u, 2000, 2, 29, 0, 0, 0);
+    check_civil(951868800u, 2000, 3, 1, 0, 0, 0);
+    check_civil(1709164800u, 2024, 2, 29, 0, 0, 0);
+    check_civil(1709251199u, 2024, 2, 29, 23, 59, 59);
+    check_civil(1709251200u, 2024, 3, 1, 0, 0, 0);
+    check_civil(1772236800u, 2026, 2, 28, 0, 0, 0);
+    check_civil(1772323200u, 2026, 3, 1, 0, 0, 0);
+    /* The end of api.deepseek.com's certificate when this was written. */
+    check_civil(1798243199u, 2026, 12, 25, 23, 59, 59);
+    /* One past INT32_MAX, and the last second a uint32_t holds. */
+    check_civil(2147483648u, 2038, 1, 19, 3, 14, 8);
+    check_civil(4294967295u, 2106, 2, 7, 6, 28, 15);
+}
+
 void test_time_sync(void) {
     test_format_hhmm();
     test_record_round_trip();
@@ -518,4 +606,6 @@ void test_time_sync(void) {
     test_label_applies_utc_offset();
     test_label_offset_on_restored_time();
     test_label_capacity();
+    test_trusted_time_needs_a_sync();
+    test_civil();
 }

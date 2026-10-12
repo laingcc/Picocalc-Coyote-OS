@@ -18,6 +18,21 @@
  * the host tests.  This file and http_stream.c include no lwIP or Pico SDK
  * headers.
  *
+ * TLS
+ * ---
+ * A request with tls set is carried over a verified TLS connection, opened
+ * with the tls_connect adapter, and never over anything else.  For such a
+ * request the stream does not call tcp_connect at all, so there is no path,
+ * on any failure, by which its bytes could be sent in the clear: a missing
+ * tls_connect adapter, or one that fails, is a terminal error.  The adapter
+ * reports http_stream_on_connected only after the handshake has completed and
+ * the peer's certificate and host name have been verified.
+ *
+ * A bearer token is sent as "Authorization: Bearer <token>" and only on a
+ * TLS request; http_stream_start refuses one on a plain request.  The request
+ * head, which then holds the token, is wiped as soon as it has been handed to
+ * the stack or the request ends.
+ *
  * One request is in flight at a time:
  *
  *   IDLE -> RESOLVING -> CONNECTING -> SENDING -> RECEIVING_HEAD
@@ -60,7 +75,7 @@
 #define HTTP_STREAM_SEND_WINDOW 256u
 
 /* Worst-case static storage for one http_stream_t. */
-#define HTTP_STREAM_STORAGE_MAX_BYTES 2560u
+#define HTTP_STREAM_STORAGE_MAX_BYTES 3584u
 
 /* Result codes for the dns_resolve / tcp_connect / tcp_write adapters. */
 #define HTTP_STREAM_IO_ERROR (-1)
@@ -91,7 +106,8 @@ typedef enum {
     HTTP_STREAM_ERROR_PROTOCOL,        /* malformed or oversized HTTP */
     HTTP_STREAM_ERROR_HTTP_STATUS,     /* complete response, status not 2xx */
     HTTP_STREAM_ERROR_SINK,            /* the sink rejected the body */
-    HTTP_STREAM_ERROR_CANCELLED
+    HTTP_STREAM_ERROR_CANCELLED,
+    HTTP_STREAM_ERROR_TLS              /* TLS could not be set up or verified */
 } http_stream_error_t;
 
 /*
@@ -134,6 +150,17 @@ typedef struct {
 
     /* Abort the connection immediately.  No events may follow. */
     void (*tcp_abort)(void *context);
+
+    /*
+     * Begin connecting to the last resolved address over TLS, verifying the
+     * peer's certificate chain and that it names host.  Same results as
+     * tcp_connect, and the connection is then used through the same
+     * tcp_write / tcp_close / tcp_abort.  http_stream_on_connected must only
+     * be reported once the verified handshake is complete.  host is only
+     * valid for the duration of the call.  May be NULL on a platform without
+     * TLS, in which case TLS requests cannot be started.
+     */
+    int (*tls_connect)(void *context, const char *host, uint16_t port);
 } http_stream_ops_t;
 
 /* Receiver for decoded response body bytes.  Both return 0 on success. */
@@ -146,8 +173,13 @@ typedef struct {
 
 /*
  * One request.  The strings only need to live for the duration of
- * http_stream_start; body and sink must stay valid until the stream leaves its
- * active states.  A timeout of 0 disables that timeout.
+ * http_stream_start, except host on a TLS request, which must stay valid
+ * until the connection attempt has begun; body and sink must stay valid until
+ * the stream leaves its active states.  A timeout of 0 disables that timeout.
+ *
+ * bearer_token may be NULL for none.  When given it must be a non-empty
+ * RFC 6750 b64token and tls must be set.  With tls set and port 443 the Host
+ * header carries no port.
  */
 typedef struct {
     const char *host;
@@ -155,9 +187,11 @@ typedef struct {
     const char *method;
     const char *path;
     const char *content_type;
+    const char *bearer_token;
+    bool tls;
     provider_request_t body;
     http_stream_sink_t sink;
-    uint32_t connect_timeout_ms; /* resolve + connect */
+    uint32_t connect_timeout_ms; /* resolve + connect (+ TLS handshake) */
     uint32_t idle_timeout_ms;    /* no bytes acked or received */
     uint32_t request_timeout_ms; /* whole request, start to finish */
 } http_stream_request_t;
@@ -179,6 +213,8 @@ typedef struct {
     uint32_t activity_ms;
 
     bool connection_open; /* the stream currently owns a connection */
+    bool tls;             /* the request must travel over verified TLS */
+    const char *tls_host; /* name to verify; only used to begin connecting */
     int status_code;
 
     size_t head_length;
@@ -199,7 +235,8 @@ void http_stream_init(http_stream_t *stream, const http_stream_ops_t *ops, void 
 /*
  * Start a request.  Returns 0 once resolution has begun.  Returns -1 and
  * leaves the stream untouched if the arguments are invalid, the request head
- * does not fit, or a request is already active; returns -1 with the stream in
+ * does not fit, a request is already active, a TLS request is made without a
+ * tls_connect adapter, or a bearer token is malformed or offered without TLS; returns -1 with the stream in
  * ERROR if the link is down or the resolver failed immediately.
  */
 int http_stream_start(http_stream_t *stream, const http_stream_request_t *request);
