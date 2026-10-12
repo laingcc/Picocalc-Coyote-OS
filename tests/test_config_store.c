@@ -6,6 +6,7 @@
 
 #define SECRET_PASSWORD "hunter2-wifi-secret"
 #define SECRET_TOKEN "bearer-secret-token"
+#define SECRET_API_TOKEN "0123456789abcdef0123456789abcdef"
 
 static const char *const test_dir = ".";
 static char file_text[4096];
@@ -53,6 +54,7 @@ static void fill(ai_config_t *config) {
     config->idle_timeout_ms = 7000u;
     config->max_predict = 1024u;
     config->utc_offset_minutes = -210;
+    strcpy(config->api_token, SECRET_API_TOKEN);
 }
 
 static void check_filled(const ai_config_t *config) {
@@ -68,6 +70,7 @@ static void check_filled(const ai_config_t *config) {
     CHECK(config->request_timeout_ms == 90000u);
     CHECK(config->idle_timeout_ms == 7000u);
     CHECK(config->max_predict == 1024u);
+    CHECK(strcmp(config->api_token, SECRET_API_TOKEN) == 0);
     CHECK(config->utc_offset_minutes == -210);
 }
 
@@ -122,6 +125,7 @@ static void check_round_trip(void) {
     /* The file is the one place the secrets are written. */
     CHECK(strstr(read_file(CONFIG_STORE_FILE_NAME), "password=" SECRET_PASSWORD "\n") != NULL);
     CHECK(strstr(file_text, "bearer_token=" SECRET_TOKEN "\n") != NULL);
+    CHECK(strstr(file_text, "\napi_token=" SECRET_API_TOKEN "\n") != NULL);
 
     memset(&loaded, 0x5a, sizeof(loaded));
     CHECK(config_store_load(&loaded, test_dir) == AI_CONFIG_OK);
@@ -148,6 +152,7 @@ static void check_maximum_size_round_trip(void) {
     memset(saved.host, 'h', sizeof(saved.host) - 1u);
     memset(saved.model, 'm', sizeof(saved.model) - 1u);
     memset(saved.bearer_token, 't', sizeof(saved.bearer_token) - 1u);
+    memset(saved.api_token, 'a', sizeof(saved.api_token) - 1u);
     saved.port = 65535u;
     saved.connect_timeout_ms = AI_CONFIG_CONNECT_TIMEOUT_MS_MAX;
     saved.request_timeout_ms = AI_CONFIG_REQUEST_TIMEOUT_MS_MAX;

@@ -192,8 +192,8 @@ void reset_usb_boot(uint32_t gpio_activity_pin_mask, uint32_t disable_interface_
 /* ---- Tests --------------------------------------------------------------- */
 
 /* Rows of the Connection settings list, top to bottom. */
-enum { ROW_HOST = 2, ROW_PORT = 3, ROW_PASSWORD = 5, ROW_SYSTEM_PROMPT = 10, ROW_TEMPERATURE = 11,
-       ROW_UTC_OFFSET = 12, ROW_API_KEY = 13, ROW_APPLY = 14 };
+enum { ROW_HOST = 2, ROW_PORT = 3, ROW_API_TOKEN = 4, ROW_PASSWORD = 6, ROW_SYSTEM_PROMPT = 11,
+       ROW_TEMPERATURE = 12, ROW_UTC_OFFSET = 13, ROW_API_KEY = 14, ROW_APPLY = 15 };
 
 /* HOME, then down to Connection settings from wherever the menu starts
  * (it starts on the current mode: Text, Calculator, Chat). */
@@ -245,6 +245,7 @@ static void check_apply_from_calculator(void) {
     CHECK(shows(snapshots[1], " Model: (none) "));
     CHECK(shows(snapshots[1], " Host: (none) "));
     CHECK(shows(snapshots[1], " Port: 11434 "));
+    CHECK(shows(snapshots[1], " API token: (none) "));
     CHECK(shows(snapshots[1], " SSID: (none) "));
     CHECK(shows(snapshots[1], " Password: (none) "));
     CHECK(shows(snapshots[1], " Connect ms: 15000 "));
@@ -556,6 +557,52 @@ static void check_usb_disk_row(void) {
     CHECK(ui_get_current_mode() == MODE_CALCULATOR);
 }
 
+/* The API token is warned about before it is typed, masked in the list
+ * afterwards, and reaches the services and the saved file unchanged. */
+static void check_api_token_is_warned_and_masked(void) {
+    int configured_before = configure_calls, saved_before = save_calls;
+
+    script_begin();
+    open_settings_from(MODE_CHAT);
+    press_times(KEY_DOWN, ROW_API_TOKEN); press(KEY_ENTER);
+    press(SNAP);
+    press(KEY_ENTER); /* dismiss the notice */
+    type_line("0f1e2d3c4b5a69788796a5b4c3d2e1f0");
+    press(SNAP);
+    press_times(KEY_DOWN, ROW_APPLY - ROW_API_TOKEN); press(KEY_ENTER);
+    ui_show_mode_menu();
+
+    CHECK(script_consumed());
+    CHECK(snapshot_count == 2);
+    CHECK(shows(snapshots[0], " API TOKEN "));
+    CHECK(shows(snapshots[0], " Saved as plain text on SD "));
+    CHECK(shows(snapshots[1], " API token: ******** "));
+    CHECK(!shows(snapshots[1], "0f1e2d3c"));
+    CHECK(!shows(screen, "0f1e2d3c"));
+    CHECK(configure_calls == configured_before + 1);
+    CHECK(save_calls == saved_before + 1);
+    CHECK(strcmp(configured.api_token, "0f1e2d3c4b5a69788796a5b4c3d2e1f0") == 0);
+    CHECK(strcmp(saved.api_token, "0f1e2d3c4b5a69788796a5b4c3d2e1f0") == 0);
+
+    /* A token with a blank in it is refused and the old one is kept. */
+    script_begin();
+    open_settings_from(MODE_CHAT);
+    press_times(KEY_DOWN, ROW_API_TOKEN); press(KEY_ENTER);
+    press(KEY_ENTER);
+    type_line("two words");
+    press(SNAP);
+    press(KEY_ENTER); /* dismiss the rejection */
+    press(KEY_ESC);
+    ui_show_mode_menu();
+
+    CHECK(script_consumed());
+    CHECK(snapshot_count == 1);
+    CHECK(shows(snapshots[0], " NOT CHANGED "));
+    CHECK(shows(snapshots[0], " Not a valid value "));
+    CHECK(configure_calls == configured_before + 1);
+    CHECK(strcmp(configured.api_token, "0f1e2d3c4b5a69788796a5b4c3d2e1f0") == 0);
+}
+
 void test_mode_menu(void) {
     ui_init();
     chat_mode_init();
@@ -571,4 +618,5 @@ void test_mode_menu(void) {
     check_apply_cancels_a_streaming_reply();
     check_deepseek_setup();
     check_usb_disk_row();
+    check_api_token_is_warned_and_masked();
 }

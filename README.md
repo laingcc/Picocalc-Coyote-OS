@@ -143,6 +143,18 @@ defaults. Without an SD card the settings still apply, but only until power-off.
 Ollama listens on `127.0.0.1` by default; start it with `OLLAMA_HOST=0.0.0.0` so the PicoCalc
 can reach it.
 
+## API token
+
+The Ollama request can carry one. **API token** is optional and empty by default; when set (up
+to 127 visible ASCII characters, no blanks) it is sent to the chat host as an
+`Authorization: Bearer` header, which is what the Muse bridge checks. A plain Ollama ignores it
+and needs none.
+
+Like the Wi-Fi password it appears as `********` in the menus, and it is written in plain text
+to `/coyote/ai.ini` as `api_token=…`. You can put it there from a computer instead of typing it
+on the keypad with `tools/provision_ai_config.py`. Anyone who can read the SD card can read the
+token, and it travels over plain HTTP, so use it only on a LAN you trust.
+
 ## DeepSeek
 
 The firmware can talk to DeepSeek itself: no bridge or other machine is involved.
@@ -228,21 +240,26 @@ The original plan is in [docs/plans/2026-10-07-pico2w-ai-chat.md](docs/plans/202
 `tools/muse_bridge/` is an optional Python service that runs on a Linux machine, separate from
 the firmware. It wraps the Meta Muse Gadget SDK and exposes it as a streaming HTTP endpoint that
 requires a bearer token and validates and size-limits every request; it binds to `127.0.0.1`
-unless told otherwise. The firmware does not use it yet: it only talks to Ollama and DeepSeek. See [tools/muse_bridge/README.md](tools/muse_bridge/README.md).
+unless told otherwise. It also answers Ollama's `POST /api/chat`, so the firmware reaches Muse
+with its ordinary settings: **Host** the bridge machine, **Port** `8765`, **Model** `muse`, and
+**API token** the bridge token. The avatar Muse sends for this device can be compiled into the
+firmware (see [tools/muse_bridge/README.md](tools/muse_bridge/README.md#picocalc-setup)).
 
 ## Known limitations
 
 - Wi-Fi is WPA2-AES or open only. WPA3 and WPA/TKIP networks are not supported.
 - `.local` host names are resolved with one-shot mDNS queries, which is best-effort. An IP
   address is the reliable value for Host.
-- Requests to an Ollama host are plaintext HTTP. Use it only on a LAN you trust.
-- Ollama and DeepSeek are the only providers in the firmware.
+- Requests to an Ollama host, the Muse bridge included, are plaintext HTTP; the API token goes
+  with them. Use it only on a LAN you trust.
+- Ollama, DeepSeek, OpenAI, Mistral, Gemini and Claude are the providers in the firmware; Muse is
+  reached through the bridge, which speaks Ollama's protocol.
 - The USB disk mode is an all-or-nothing stop: while it runs, nothing else on the device can use
   the card, and the chat waits until it ends.
 - The clock is UTC only and the NTP server is fixed. With no battery-backed RTC, a time restored
   after a reboot is stale until Wi-Fi comes back.
-- The Wi-Fi password and the DeepSeek API key are stored unencrypted in `/coyote/ai.ini` on the
-  SD card.
+- The Wi-Fi password, the API token and the cloud API key are stored unencrypted in
+  `/coyote/ai.ini` on the SD card.
 
 ## License
 

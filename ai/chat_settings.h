@@ -14,9 +14,9 @@
  * the same numeric bounds.  A rejected value leaves the configuration
  * untouched.
  *
- * The Wi-Fi password and the API key can be set but never read back:
- * chat_settings_format renders each as a fixed run of asterisks that does not
- * reveal its length.
+ * The Wi-Fi password, the API key and the API token can be set but never read
+ * back: chat_settings_format renders each as a fixed run of asterisks that does
+ * not reveal its length.
  *
  * The rules that tie fields to the provider are kept at every step.  Choosing
  * a cloud provider ("deepseek", "openai", "mistral", "gemini", "claude") sets
@@ -24,7 +24,9 @@
  * while it is chosen the host and port cannot be changed, the model must be
  * one of that provider's models, and the API key must be a valid bearer
  * token.  Leaving a cloud provider clears the API key, so one provider's key
- * is never sent to another.
+ * is never sent to another.  The API token is a separate field: it belongs to
+ * whatever host the user typed, and it is what the Muse bridge on the LAN
+ * checks.
  */
 
 typedef enum {
@@ -32,6 +34,7 @@ typedef enum {
     CHAT_SETTING_MODEL,
     CHAT_SETTING_HOST,
     CHAT_SETTING_PORT,
+    CHAT_SETTING_API_TOKEN,
     CHAT_SETTING_SSID,
     CHAT_SETTING_PASSWORD,
     CHAT_SETTING_CONNECT_TIMEOUT,
@@ -60,7 +63,8 @@ int chat_settings_allows_empty(chat_setting_t field);
  * the ai_config rules this rejects control characters, leading or trailing
  * blanks (the parser would silently trim them), any provider but "ollama"
  * and the cloud providers, a model name longer than the Ollama provider can
- * send, a model a cloud provider does not list, and
+ * send, a model a cloud provider does not list, an API token that is not
+ * visible ASCII without blanks, and
  * any value that would leave the configuration failing ai_config_validate.
  */
 ai_config_status_t chat_settings_set(ai_config_t *config, chat_setting_t field, const char *value);
@@ -68,8 +72,8 @@ ai_config_status_t chat_settings_set(ai_config_t *config, chat_setting_t field, 
 /*
  * Write the field's display value to out (always NUL-terminated when
  * capacity is non-zero, truncated to fit) and return its length.  The
- * password and the API key are rendered as "********" when set and "" when
- * empty.
+ * password, the API key and the API token are rendered as "********" when set
+ * and "" when empty.
  */
 size_t chat_settings_format(const ai_config_t *config, chat_setting_t field, char *out, size_t capacity);
 

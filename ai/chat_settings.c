@@ -15,6 +15,7 @@ static const setting_info_t settings[CHAT_SETTING_COUNT] = {
     {"Model", "model"},
     {"Host", "host"},
     {"Port", "port"},
+    {"API token", "api_token"},
     {"SSID", "ssid"},
     {"Password", "password"},
     {"Connect ms", "connect_timeout_ms"},
@@ -28,7 +29,8 @@ static const setting_info_t settings[CHAT_SETTING_COUNT] = {
 };
 
 /* Scratch for validation; static because the parser is too big for a stack
- * that also carries the UI.  Wiped after every use: it can hold a password. */
+ * that also carries the UI.  Wiped after every use: it can hold a password
+ * or a token. */
 static ai_config_parser_t scratch_parser;
 static ai_config_t scratch_config;
 static ai_config_t candidate;
@@ -42,13 +44,14 @@ const char *chat_settings_label(chat_setting_t field) {
 }
 
 int chat_settings_is_secret(chat_setting_t field) {
-    return field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_API_KEY;
+    return field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_API_KEY ||
+           field == CHAT_SETTING_API_TOKEN;
 }
 
 int chat_settings_allows_empty(chat_setting_t field) {
     return field == CHAT_SETTING_MODEL || field == CHAT_SETTING_SSID ||
            field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_SYSTEM_PROMPT ||
-           field == CHAT_SETTING_API_KEY;
+           field == CHAT_SETTING_API_KEY || field == CHAT_SETTING_API_TOKEN;
 }
 
 static ai_config_status_t precheck(chat_setting_t field, const char *value) {
@@ -99,6 +102,9 @@ static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *
             break;
         case CHAT_SETTING_PORT:
             config->port = from->port;
+            break;
+        case CHAT_SETTING_API_TOKEN:
+            memcpy(config->api_token, from->api_token, sizeof(config->api_token));
             break;
         case CHAT_SETTING_SSID:
             memcpy(config->ssid, from->ssid, sizeof(config->ssid));
@@ -254,6 +260,9 @@ size_t chat_settings_format(const ai_config_t *config, chat_setting_t field, cha
             break;
         case CHAT_SETTING_PORT:
             written = snprintf(out, capacity, "%u", (unsigned)config->port);
+            break;
+        case CHAT_SETTING_API_TOKEN:
+            written = snprintf(out, capacity, "%s", config->api_token[0] != '\0' ? "********" : "");
             break;
         case CHAT_SETTING_SSID:
             written = snprintf(out, capacity, "%s", config->ssid);

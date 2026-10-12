@@ -84,8 +84,9 @@
  *   Content-Type, Content-Length, Connection     73
  *   blank line                                    2
  *
- * 470 bytes; Claude's, with its version header, is 395.  Rounded up with room
- * to spare, and checked by the tests with a longest key for every provider.
+ * 470 bytes; Claude's, with its version header, is 395.  The bridge's token is
+ * shorter than a cloud key, so it fits here too.  Rounded up with room to
+ * spare, and checked by the tests with a longest key for every provider.
  */
 #define HTTP_STREAM_REQUEST_HEAD_MAX 768u
 #define HTTP_STREAM_SEND_WINDOW 256u
@@ -215,7 +216,12 @@ typedef struct {
     const char *method;
     const char *path;
     const char *content_type;
+    /* Sent as "Authorization: Bearer ***" when not NULL or empty, and only
+     * over TLS; it must then be a valid bearer token, never logged. */
     const char *bearer_token;
+    /* The bridge's token: the same header, but allowed over plain HTTP, since
+     * the bridge is reached on the LAN.  Only one credential may be set. */
+    const char *api_token;
     const char *api_key_header;
     const char *api_key;
     const char *extra_header;
@@ -267,8 +273,8 @@ void http_stream_init(http_stream_t *stream, const http_stream_ops_t *ops, void 
  * Start a request.  Returns 0 once resolution has begun.  Returns -1 and
  * leaves the stream untouched if the arguments are invalid, the request head
  * does not fit, a request is already active, a TLS request is made without a
- * tls_connect adapter, or a credential is malformed, offered without TLS or
- * given twice; returns -1 with the stream in ERROR if the link is down or the resolver failed immediately.
+ * tls_connect adapter, or a credential is malformed or given twice; returns -1
+ * with the stream in ERROR if the link is down or the resolver failed immediately.
  */
 int http_stream_start(http_stream_t *stream, const http_stream_request_t *request);
 

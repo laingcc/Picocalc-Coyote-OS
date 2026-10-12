@@ -186,14 +186,21 @@ static bool is_header_name(const char *text) {
 }
 
 /*
- * Whether the request's credential, if it has one, may be sent: over TLS
- * only, in a form that cannot break out of its header, and only one of them.
+ * Whether the request's credential, if it has one, may be sent: only one of
+ * them, in a form that cannot break out of its header, and over TLS - except
+ * the bridge's token, which belongs to a host on the LAN and travels in clear
+ * because the bridge speaks plain HTTP.
  */
 static bool credential_valid(const http_stream_request_t *request) {
     if ((request->api_key == NULL) != (request->api_key_header == NULL)) {
         return false;
     }
     if (request->bearer_token != NULL && request->api_key != NULL) {
+        return false;
+    }
+    if (request->api_token != NULL &&
+        (request->bearer_token != NULL || request->api_key != NULL ||
+         !ai_config_api_token_valid(request->api_token))) {
         return false;
     }
     if (request->bearer_token != NULL &&
@@ -242,7 +249,8 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
         request->sink.feed == NULL) {
         return -1;
     }
-    /* TLS needs its adapter; a credential needs TLS and a header-safe form. */
+    /* TLS needs its adapter; a credential needs a header-safe form, and every
+     * one but the bridge's token may only travel over TLS. */
     if (request->tls && stream->ops->tls_connect == NULL) {
         return -1;
     }
@@ -261,6 +269,11 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
         credential_name = request->api_key_header;
         credential_separator = ": ";
         credential = request->api_key;
+    } else if (request->api_token != NULL) {
+        /* The bridge speaks plain HTTP on the LAN, so its one token is the
+         * only credential allowed to travel unencrypted. */
+        credential_name = "Authorization: Bearer ";
+        credential = request->api_token;
     }
 
     port_text[0] = '\0';

@@ -718,6 +718,8 @@ int app_services_chat_start(const ollama_message_t *messages,
     request.method = ollama_provider_method();
     request.path = ollama_provider_path();
     request.content_type = ollama_provider_content_type();
+    /* The bridge's token, if one is set; empty leaves the request as it was. */
+    request.api_token = services.config.api_token[0] != '\0' ? services.config.api_token : NULL;
     request.body = ollama_provider_request(&services.provider);
     request.sink.feed = sink_feed;
     request.sink.finish = sink_finish;

@@ -330,9 +330,9 @@ static void explain_rejection(chat_setting_t field, ai_config_status_t status) {
 }
 
 /* Prompt for one field and store it in target if it validates.  Every field,
- * the Wi-Fi password included, is shown as it is typed, except the API key,
- * which is echoed as asterisks; the typed value is wiped afterwards because
- * it may be either secret. */
+ * the Wi-Fi password included, is shown as it is typed, except the API key and
+ * the bridge's API token, which are echoed as asterisks; the typed value is
+ * wiped afterwards because it may be a secret. */
 static bool edit_setting(ai_config_t *target, chat_setting_t field) {
     char value[UI_INPUT_MAX + 1], title[24];
     unsigned flags = UI_INPUT_ANY_CHAR;
@@ -341,7 +341,9 @@ static bool edit_setting(ai_config_t *target, chat_setting_t field) {
     bool stored_key;
 
     if (chat_settings_allows_empty(field)) flags |= UI_INPUT_ALLOW_EMPTY;
-    if (field == CHAT_SETTING_API_KEY) flags |= UI_INPUT_MASKED;
+    /* The Wi-Fi password is typed visibly, so a mistyped one can be seen; a
+     * key or a token is not. */
+    if (field == CHAT_SETTING_API_KEY || field == CHAT_SETTING_API_TOKEN) flags |= UI_INPUT_MASKED;
     snprintf(title, sizeof(title), " %s ", chat_settings_label(field));
     if (!ui_show_input_dialog(title, value, sizeof(value), flags)) { memset(value, 0, sizeof(value)); return false; }
     status = chat_settings_set(target, field, value);
@@ -456,6 +458,11 @@ static void settings_menu(void) {
         if (sel == CHAT_SETTING_PROVIDER) pick_provider(&draft);
         else if (sel == CHAT_SETTING_MODEL && ai_config_cloud(&draft) != NULL) pick_cloud_model(&draft);
         else if (sel == CHAT_SETTING_SSID) ssid_menu(&draft);
+        else if (sel == CHAT_SETTING_API_TOKEN) {
+            /* Anyone holding the card can read it: say so before it is typed. */
+            notice(" API TOKEN ", " Saved as plain text on SD ");
+            edit_setting(&draft, CHAT_SETTING_API_TOKEN);
+        }
         else edit_setting(&draft, (chat_setting_t)sel);
     }
     memset(&draft, 0, sizeof(draft));

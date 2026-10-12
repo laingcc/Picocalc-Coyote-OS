@@ -7,11 +7,11 @@
 
 /* Upper bound of ai_config_serialize output: every text field at capacity
  * plus, per line, the key, '=', a 32-bit decimal and the newline. */
-#define CONFIG_STORE_KEY_COUNT 15u
+#define CONFIG_STORE_KEY_COUNT 16u
 #define CONFIG_STORE_TEXT_CAPACITY \
     (AI_CONFIG_SSID_CAPACITY + AI_CONFIG_PASSWORD_CAPACITY + AI_CONFIG_PROVIDER_CAPACITY + \
      AI_CONFIG_HOST_CAPACITY + AI_CONFIG_MODEL_CAPACITY + AI_CONFIG_BEARER_TOKEN_CAPACITY + \
-     AI_CONFIG_SYSTEM_PROMPT_CAPACITY + \
+     AI_CONFIG_SYSTEM_PROMPT_CAPACITY + AI_CONFIG_API_TOKEN_CAPACITY + \
      CONFIG_STORE_KEY_COUNT * (AI_CONFIG_KEY_CAPACITY + 1u + 10u + 1u) + 1u)
 
 /* Scratch state: a file chunk while loading, the whole file while saving. */
@@ -19,7 +19,7 @@ static ai_config_parser_t parser;
 static char text[CONFIG_STORE_TEXT_CAPACITY];
 static char file_path[CONFIG_STORE_PATH_CAPACITY];
 
-/* The scratch buffers have held the password and the bearer token. */
+/* The scratch buffers have held the password and the tokens. */
 static void wipe_scratch(void) {
     memset(&parser, 0, sizeof(parser));
     memset(text, 0, sizeof(text));

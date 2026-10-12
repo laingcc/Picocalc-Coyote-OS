@@ -38,6 +38,7 @@ static void check_defaults(void) {
     CHECK(config.idle_timeout_ms == 15000u);
     CHECK(config.max_predict == 384u);
     CHECK(config.utc_offset_minutes == 0);
+    CHECK_STR_EQ(config.api_token, "");
 }
 
 static void check_incremental_parse(void) {
@@ -87,7 +88,8 @@ static void check_serialize_defaults(void) {
         "max_predict=384\n"
         "system_prompt=" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\n"
         "temperature=80\n"
-        "utc_offset_minutes=0\n";
+        "utc_offset_minutes=0\n"
+        "api_token=\n";
     static const char expected_with_host[] =
         "version=1\n"
         "ssid=\n"
@@ -103,7 +105,8 @@ static void check_serialize_defaults(void) {
         "max_predict=384\n"
         "system_prompt=" AI_CONFIG_DEFAULT_SYSTEM_PROMPT "\n"
         "temperature=80\n"
-        "utc_offset_minutes=0\n";
+        "utc_offset_minutes=0\n"
+        "api_token=\n";
     ai_config_t config;
     ai_config_t reloaded;
     ai_config_parser_t parser;
@@ -234,7 +237,8 @@ static void check_serializer_bounds_and_round_trip(void) {
     CHECK(parse_text(&config, &parser,
                      "ssid=wifi\npassword=hidden\nprovider=muse\nhost=muse.local\nport=443\n"
                      "model=chat\nbearer_token=opaque\nconnect_timeout_ms=500\n"
-                     "request_timeout_ms=1000\nidle_timeout_ms=100\nmax_predict=1\n", 7u) == AI_CONFIG_OK);
+                     "request_timeout_ms=1000\nidle_timeout_ms=100\nmax_predict=1\n"
+                     "api_token=tok-en_1.2~3\n", 7u) == AI_CONFIG_OK);
     CHECK(ai_config_serialize(&config, NULL, 0u, &required) == AI_CONFIG_NO_SPACE);
     CHECK(required + 1u < sizeof(guarded));
     memset(guarded, 0xa5, sizeof(guarded));
@@ -247,6 +251,71 @@ static void check_serializer_bounds_and_round_trip(void) {
     CHECK(guarded[required + 1u] == 0xa5u);
     CHECK(parse_text(&parsed, &parser, (const char *)guarded, 1u) == AI_CONFIG_OK);
     CHECK(memcmp(&parsed, &config, sizeof(config)) == 0);
+}
+
+/* The API token: optional, bounded, and only visible ASCII without blanks,
+ * so it can never break out of the Authorization header it is sent in. */
+static void check_api_token(void) {
+    static const char expected_tail[] = "utc_offset_minutes=0\napi_token=0123456789abcdef!#$%&'*+-.^_`|~:/=\n";
+    static const char *const unsafe[] = {
+        "api_token=two words\n",
+        "api_token=tab\there\n",
+        "api_token=caf\xc3\xa9\n",
+        "api_token=del\x7f\n",
+        "api_token=bell\x07\n",
+    };
+    ai_config_t config;
+    ai_config_t reloaded;
+    ai_config_parser_t parser;
+    char line[AI_CONFIG_API_TOKEN_CAPACITY + 16u];
+    char output[1024];
+    size_t length = 0u;
+    size_t i;
+
+    /* Absent and empty both mean "send no Authorization header". */
+    CHECK(parse_text(&config, &parser, "host=h\n", 3u) == AI_CONFIG_OK);
+    CHECK(config.api_token[0] == '\0');
+    CHECK(parse_text(&config, &parser, "api_token=\n", 3u) == AI_CONFIG_OK);
+    CHECK(config.api_token[0] == '\0');
+
+    CHECK(parse_text(&config, &parser, "api_token=0123456789abcdef!#$%&'*+-.^_`|~:/=\n", 5u) == AI_CONFIG_OK);
+    CHECK(strcmp(config.api_token, "0123456789abcdef!#$%&'*+-.^_`|~:/=") == 0);
+    /* It is independent of the older bearer_token key. */
+    CHECK(config.bearer_token[0] == '\0');
+
+    /* Round trip: the last line of the file, literally. */
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_OK);
+    CHECK(length > sizeof(expected_tail) - 1u);
+    CHECK(strcmp(output + length - (sizeof(expected_tail) - 1u), expected_tail) == 0);
+    CHECK(parse_text(&reloaded, &parser, output, 7u) == AI_CONFIG_OK);
+    CHECK(memcmp(&reloaded, &config, sizeof(config)) == 0);
+
+    for (i = 0u; i < sizeof(unsafe) / sizeof(unsafe[0]); i++) {
+        CHECK(parse_text(&config, &parser, unsafe[i], 4u) == AI_CONFIG_INVALID_VALUE);
+        CHECK_STR_EQ(ai_config_parser_error_key(&parser), "api_token");
+    }
+    CHECK(parse_text(&config, &parser, "api_token=a\napi_token=b\n", 4u) == AI_CONFIG_DUPLICATE_KEY);
+
+    /* Capacity: 127 characters fit, 128 do not. */
+    memcpy(line, "api_token=", 10u);
+    memset(line + 10u, 'k', 127u);
+    line[137] = '\0';
+    CHECK(parse_text(&config, &parser, line, 9u) == AI_CONFIG_OK);
+    CHECK(strlen(config.api_token) == 127u);
+    memset(line + 10u, 'k', 128u);
+    line[138] = '\0';
+    CHECK(parse_text(&config, &parser, line, 9u) == AI_CONFIG_VALUE_TOO_LONG);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "api_token");
+
+    /* The serializer refuses a token set behind the parser's back. */
+    CHECK(ai_config_init(&config) == AI_CONFIG_OK);
+    strcpy(config.api_token, "has space");
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_INVALID_VALUE);
+    CHECK(length == 0u);
+    strcpy(config.api_token, "line\r\nX-Evil:1");
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_INVALID_VALUE);
+    memset(config.api_token, 'k', sizeof(config.api_token));
+    CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_INVALID_VALUE);
 }
 
 static void check_null_safety(void) {
@@ -500,6 +569,7 @@ void test_ai_config(void) {
     check_bounded_input();
     check_serializer_bounds_and_round_trip();
     check_utc_offset();
+    check_api_token();
     check_null_safety();
     check_system_prompt_and_temperature();
     check_deepseek_defaults();

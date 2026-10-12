@@ -13,6 +13,9 @@
 #define AI_CONFIG_HOST_CAPACITY 254u
 #define AI_CONFIG_MODEL_CAPACITY 129u
 #define AI_CONFIG_BEARER_TOKEN_CAPACITY 257u
+/* Sized so the token fits one settings prompt and, with the longest host,
+ * the HTTP request head. */
+#define AI_CONFIG_API_TOKEN_CAPACITY 128u
 #define AI_CONFIG_KEY_CAPACITY 32u
 #define AI_CONFIG_LINE_MAX 512u
 
@@ -104,6 +107,9 @@ typedef struct {
     char system_prompt[AI_CONFIG_SYSTEM_PROMPT_CAPACITY];
     uint16_t temperature;
     int16_t utc_offset_minutes; /* local time is UTC plus this */
+    /* Sent as "Authorization: Bearer" to the chat host when not empty.
+     * Visible ASCII without blanks; kept as plain text in the file. */
+    char api_token[AI_CONFIG_API_TOKEN_CAPACITY];
 } ai_config_t;
 
 typedef struct {
@@ -136,6 +142,13 @@ int ai_config_cloud_model_known(const ai_config_cloud_t *cloud, const char *mode
  * trailing "="): the only text that may follow "Authorization: Bearer ".  The
  * same rule is applied to a key sent in a header of its own. */
 int ai_config_bearer_token_valid(const char *token);
+
+/*
+ * True when token can be sent as the API token: visible ASCII without blanks,
+ * and short enough for the field that holds it.  Unlike a bearer token it has
+ * no structure to check - it is whatever the host on the other end issued.
+ */
+int ai_config_api_token_valid(const char *token);
 
 /*
  * Check the rules that span fields.  A cloud provider's configuration must
