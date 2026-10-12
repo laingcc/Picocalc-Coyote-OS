@@ -567,17 +567,20 @@ static void check_api_token_is_warned_and_masked(void) {
     press_times(KEY_DOWN, ROW_API_TOKEN); press(KEY_ENTER);
     press(SNAP);
     press(KEY_ENTER); /* dismiss the notice */
-    type_line("0f1e2d3c4b5a69788796a5b4c3d2e1f0");
+    press('0'); press('f'); press('1'); press(SNAP);
+    type_line("e2d3c4b5a69788796a5b4c3d2e1f0");
     press(SNAP);
     press_times(KEY_DOWN, ROW_APPLY - ROW_API_TOKEN); press(KEY_ENTER);
     ui_show_mode_menu();
 
     CHECK(script_consumed());
-    CHECK(snapshot_count == 2);
+    CHECK(snapshot_count == 3);
     CHECK(shows(snapshots[0], " API TOKEN "));
     CHECK(shows(snapshots[0], " Saved as plain text on SD "));
-    CHECK(shows(snapshots[1], " API token: ******** "));
-    CHECK(!shows(snapshots[1], "0f1e2d3c"));
+    CHECK(shows(snapshots[1], "***"));
+    CHECK(!shows(snapshots[1], "0f1"));
+    CHECK(shows(snapshots[2], " API token: ******** "));
+    CHECK(!shows(snapshots[2], "0f1e2d3c"));
     CHECK(!shows(screen, "0f1e2d3c"));
     CHECK(configure_calls == configured_before + 1);
     CHECK(save_calls == saved_before + 1);
