@@ -101,6 +101,27 @@ time_sync_state_t time_sync_state(const time_sync_t *sync);
 bool time_sync_now(const time_sync_t *sync, uint32_t *epoch);
 
 /*
+ * The current time, but only once the network has set it since boot (SYNCED).
+ * A RESTORED time is behind by however long the unit was off, so it must not
+ * decide whether a TLS certificate is within its validity period.  Returns
+ * false, leaving *epoch alone, while UNSET or RESTORED.
+ */
+bool time_sync_trusted_now(const time_sync_t *sync, uint32_t *epoch);
+
+/* A UTC calendar date and time of day. */
+typedef struct {
+    int year;   /* e.g. 2026 */
+    int month;  /* 1..12 */
+    int day;    /* 1..31 */
+    int hour;   /* 0..23 */
+    int minute; /* 0..59 */
+    int second; /* 0..59 */
+} time_sync_civil_t;
+
+/* Break epoch (seconds since 1970, UTC) into a calendar date and time. */
+void time_sync_civil(uint32_t epoch, time_sync_civil_t *civil);
+
+/*
  * The clock as shown on a status line: "--:--" while UNSET, "HH:MM" once
  * SYNCED and "HH:MM?" while RESTORED.  The time of day is local: UTC plus
  * utc_offset_minutes, which may be negative.  Returns -1, writing "" if there

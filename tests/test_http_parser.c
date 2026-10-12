@@ -232,13 +232,13 @@ static void check_malformed(void) {
     CHECK(run(truncated_chunk, strlen(truncated_chunk), 1, &response) == -1);
 
     /* Header block larger than HTTP_PARSER_HEADER_MAX fails. */
-    char oversized[2100];
+    char oversized[HTTP_PARSER_HEADER_MAX + 100u];
     size_t length = 0;
     const char *prefix = "HTTP/1.1 200 OK\r\nX-Big: ";
     memcpy(oversized, prefix, strlen(prefix));
     length = strlen(prefix);
-    memset(oversized + length, 'a', 2000);
-    length += 2000;
+    memset(oversized + length, 'a', HTTP_PARSER_HEADER_MAX);
+    length += HTTP_PARSER_HEADER_MAX;
     memcpy(oversized + length, "\r\n\r\n", 4);
     length += 4;
     for (size_t c = 0; c < sizeof(chunks) / sizeof(chunks[0]); c++) {

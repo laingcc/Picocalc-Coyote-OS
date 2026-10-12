@@ -35,9 +35,9 @@ ai_config_status_t ai_config_init(ai_config_t *config) {
 
     memset(config, 0, sizeof(*config));
     config->version = AI_CONFIG_VERSION;
-    memcpy(config->provider, "ollama", sizeof("ollama"));
+    memcpy(config->provider, AI_CONFIG_PROVIDER_OLLAMA, sizeof(AI_CONFIG_PROVIDER_OLLAMA));
     /* No default host: a fresh device is unconfigured until one is entered. */
-    config->port = 11434u;
+    config->port = AI_CONFIG_OLLAMA_PORT;
     config->connect_timeout_ms = 15000u;
     config->request_timeout_ms = 120000u;
     config->idle_timeout_ms = 15000u;
@@ -45,6 +45,97 @@ ai_config_status_t ai_config_init(ai_config_t *config) {
     config->temperature = 80u;
     memcpy(config->system_prompt, AI_CONFIG_DEFAULT_SYSTEM_PROMPT,
            sizeof(AI_CONFIG_DEFAULT_SYSTEM_PROMPT));
+    return AI_CONFIG_OK;
+}
+
+static int known_provider(const char *provider) {
+    return strcmp(provider, AI_CONFIG_PROVIDER_OLLAMA) == 0 || strcmp(provider, AI_CONFIG_PROVIDER_MUSE) == 0 ||
+           strcmp(provider, AI_CONFIG_PROVIDER_DEEPSEEK) == 0;
+}
+
+int ai_config_is_deepseek(const ai_config_t *config) {
+    return config != NULL && strcmp(config->provider, AI_CONFIG_PROVIDER_DEEPSEEK) == 0;
+}
+
+int ai_config_deepseek_model_known(const char *model) {
+    return model != NULL && (strcmp(model, AI_CONFIG_DEEPSEEK_MODEL_DEFAULT) == 0 ||
+                             strcmp(model, AI_CONFIG_DEEPSEEK_MODEL_REASONER) == 0);
+}
+
+int ai_config_bearer_token_valid(const char *token) {
+    size_t i = 0u;
+
+    if (token == NULL) {
+        return 0;
+    }
+    for (; token[i] != '\0' && token[i] != '='; i++) {
+        char c = token[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+              c == '.' || c == '_' || c == '~' || c == '+' || c == '/')) {
+            return 0;
+        }
+    }
+    if (i == 0u) {
+        return 0;
+    }
+    for (; token[i] != '\0'; i++) {
+        if (token[i] != '=') {
+            return 0;
+        }
+    }
+    return i < AI_CONFIG_BEARER_TOKEN_CAPACITY;
+}
+
+/* The field breaking a cross-field rule, or KEY_UNKNOWN if none does. */
+static int invalid_provider_field(const ai_config_t *config) {
+    if (!ai_config_is_deepseek(config)) {
+        return KEY_UNKNOWN;
+    }
+    if (strcmp(config->host, AI_CONFIG_DEEPSEEK_HOST) != 0) {
+        return KEY_HOST;
+    }
+    if (config->port != AI_CONFIG_DEEPSEEK_PORT) {
+        return KEY_PORT;
+    }
+    if (!ai_config_deepseek_model_known(config->model)) {
+        return KEY_MODEL;
+    }
+    if (config->bearer_token[0] != '\0' && !ai_config_bearer_token_valid(config->bearer_token)) {
+        return KEY_BEARER_TOKEN;
+    }
+    return KEY_UNKNOWN;
+}
+
+ai_config_status_t ai_config_validate(const ai_config_t *config) {
+    if (config == NULL) {
+        return AI_CONFIG_INVALID_ARGUMENT;
+    }
+    return invalid_provider_field(config) == KEY_UNKNOWN ? AI_CONFIG_OK : AI_CONFIG_INVALID_VALUE;
+}
+
+ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provider) {
+    if (config == NULL || provider == NULL) {
+        return AI_CONFIG_INVALID_ARGUMENT;
+    }
+    if (!known_provider(provider)) {
+        return AI_CONFIG_INVALID_VALUE;
+    }
+    if (strcmp(config->provider, provider) == 0) {
+        return AI_CONFIG_OK;
+    }
+    if (strcmp(provider, AI_CONFIG_PROVIDER_DEEPSEEK) == 0) {
+        memset(config->host, 0, sizeof(config->host));
+        memcpy(config->host, AI_CONFIG_DEEPSEEK_HOST, sizeof(AI_CONFIG_DEEPSEEK_HOST));
+        config->port = AI_CONFIG_DEEPSEEK_PORT;
+        memset(config->model, 0, sizeof(config->model));
+        memcpy(config->model, AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, sizeof(AI_CONFIG_DEEPSEEK_MODEL_DEFAULT));
+    } else if (ai_config_is_deepseek(config)) {
+        memset(config->host, 0, sizeof(config->host));
+        config->port = AI_CONFIG_OLLAMA_PORT;
+        memset(config->model, 0, sizeof(config->model));
+    }
+    memset(config->provider, 0, sizeof(config->provider));
+    memcpy(config->provider, provider, strlen(provider) + 1u);
     return AI_CONFIG_OK;
 }
 
@@ -156,7 +247,7 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
         case KEY_PASSWORD:
             return copy_value(parser, id, config->password, sizeof(config->password), value);
         case KEY_PROVIDER:
-            if (strcmp(value, "ollama") != 0 && strcmp(value, "muse") != 0) {
+            if (!known_provider(value)) {
                 return fail(parser, AI_CONFIG_INVALID_VALUE, id);
             }
             return copy_value(parser, id, config->provider, sizeof(config->provider), value);
@@ -323,6 +414,30 @@ ai_config_status_t ai_config_parser_feed(ai_config_parser_t *parser, const void 
     return AI_CONFIG_OK;
 }
 
+static int seen(const ai_config_parser_t *parser, int id) {
+    return (parser->seen_keys & (uint16_t)(1u << (unsigned)id)) != 0u;
+}
+
+/* Fill in what a "deepseek" file left out, then apply the cross-field rules. */
+static ai_config_status_t finish_provider(ai_config_parser_t *parser) {
+    ai_config_t *config = parser->config;
+    int id;
+
+    if (ai_config_is_deepseek(config)) {
+        if (!seen(parser, KEY_HOST)) {
+            memcpy(config->host, AI_CONFIG_DEEPSEEK_HOST, sizeof(AI_CONFIG_DEEPSEEK_HOST));
+        }
+        if (!seen(parser, KEY_PORT)) {
+            config->port = AI_CONFIG_DEEPSEEK_PORT;
+        }
+        if (config->model[0] == '\0') {
+            memcpy(config->model, AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, sizeof(AI_CONFIG_DEEPSEEK_MODEL_DEFAULT));
+        }
+    }
+    id = invalid_provider_field(config);
+    return id == KEY_UNKNOWN ? AI_CONFIG_OK : fail(parser, AI_CONFIG_INVALID_VALUE, id);
+}
+
 ai_config_status_t ai_config_parser_finish(ai_config_parser_t *parser) {
     ai_config_status_t status;
     if (parser == NULL || parser->config == NULL || parser->finished != 0u) {
@@ -335,12 +450,14 @@ ai_config_status_t ai_config_parser_finish(ai_config_parser_t *parser) {
     if (parser->pending_cr != 0u) {
         return fail(parser, AI_CONFIG_MALFORMED_LINE, KEY_UNKNOWN);
     }
-    if (parser->line_length == 0u) {
-        return AI_CONFIG_OK;
+    if (parser->line_length != 0u) {
+        status = parse_line(parser);
+        parser->line_length = 0u;
+        if (status != AI_CONFIG_OK) {
+            return status;
+        }
     }
-    status = parse_line(parser);
-    parser->line_length = 0u;
-    return status;
+    return finish_provider(parser);
 }
 
 const char *ai_config_parser_error_key(const ai_config_parser_t *parser) {
@@ -419,7 +536,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         !serializable_text(config->ssid, sizeof(config->ssid), 1) ||
         !serializable_text(config->password, sizeof(config->password), 1) ||
         !serializable_text(config->provider, sizeof(config->provider), 0) ||
-        (strcmp(config->provider, "ollama") != 0 && strcmp(config->provider, "muse") != 0) ||
+        !known_provider(config->provider) || invalid_provider_field(config) != KEY_UNKNOWN ||
         !serializable_text(config->host, sizeof(config->host), 1) ||
         !serializable_text(config->model, sizeof(config->model), 1) ||
         !serializable_text(config->bearer_token, sizeof(config->bearer_token), 1) ||

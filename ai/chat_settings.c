@@ -24,12 +24,14 @@ static const setting_info_t settings[CHAT_SETTING_COUNT] = {
     {"System prompt", "system_prompt"},
     {"Temperature", "temperature"},
     {"UTC offset min", "utc_offset_minutes"},
+    {"API key", "bearer_token"},
 };
 
 /* Scratch for validation; static because the parser is too big for a stack
  * that also carries the UI.  Wiped after every use: it can hold a password. */
 static ai_config_parser_t scratch_parser;
 static ai_config_t scratch_config;
+static ai_config_t candidate;
 
 static int known(chat_setting_t field) {
     return (int)field >= 0 && field < CHAT_SETTING_COUNT;
@@ -40,12 +42,13 @@ const char *chat_settings_label(chat_setting_t field) {
 }
 
 int chat_settings_is_secret(chat_setting_t field) {
-    return field == CHAT_SETTING_PASSWORD;
+    return field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_API_KEY;
 }
 
 int chat_settings_allows_empty(chat_setting_t field) {
     return field == CHAT_SETTING_MODEL || field == CHAT_SETTING_SSID ||
-           field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_SYSTEM_PROMPT;
+           field == CHAT_SETTING_PASSWORD || field == CHAT_SETTING_SYSTEM_PROMPT ||
+           field == CHAT_SETTING_API_KEY;
 }
 
 static ai_config_status_t precheck(chat_setting_t field, const char *value) {
@@ -61,11 +64,16 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
     if (length > 0u && (value[0] == ' ' || value[length - 1u] == ' ')) {
         return AI_CONFIG_INVALID_VALUE;
     }
-    if (field == CHAT_SETTING_PROVIDER && strcmp(value, "ollama") != 0) {
+    if (field == CHAT_SETTING_PROVIDER && strcmp(value, AI_CONFIG_PROVIDER_OLLAMA) != 0 &&
+        strcmp(value, AI_CONFIG_PROVIDER_DEEPSEEK) != 0) {
         return AI_CONFIG_INVALID_VALUE;
     }
     if (field == CHAT_SETTING_MODEL && length > OLLAMA_MODEL_MAX) {
         return AI_CONFIG_VALUE_TOO_LONG;
+    }
+    /* Whatever the provider, the key is only ever sent as a bearer token. */
+    if (field == CHAT_SETTING_API_KEY && length > 0u && !ai_config_bearer_token_valid(value)) {
+        return AI_CONFIG_INVALID_VALUE;
     }
     if (field == CHAT_SETTING_SYSTEM_PROMPT && length > AI_CONFIG_SYSTEM_PROMPT_CAPACITY - 1u) {
         return AI_CONFIG_VALUE_TOO_LONG;
@@ -76,7 +84,11 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
 static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *from) {
     switch (field) {
         case CHAT_SETTING_PROVIDER:
-            memcpy(config->provider, from->provider, sizeof(config->provider));
+            /* Also moves the host, port and model to the provider's own. */
+            ai_config_set_provider(config, from->provider);
+            break;
+        case CHAT_SETTING_API_KEY:
+            memcpy(config->bearer_token, from->bearer_token, sizeof(config->bearer_token));
             break;
         case CHAT_SETTING_MODEL:
             memcpy(config->model, from->model, sizeof(config->model));
@@ -181,6 +193,10 @@ ai_config_status_t chat_settings_set(ai_config_t *config, chat_setting_t field, 
         config->temperature = hundredths;
         return AI_CONFIG_OK;
     }
+    /* A lone "model=" line would be read as a DeepSeek default, not as empty. */
+    if (field == CHAT_SETTING_MODEL && ai_config_is_deepseek(config) && !ai_config_deepseek_model_known(value)) {
+        return AI_CONFIG_INVALID_VALUE;
+    }
 
     status = ai_config_parser_init(&scratch_parser, &scratch_config);
     if (status == AI_CONFIG_OK) {
@@ -196,7 +212,15 @@ ai_config_status_t chat_settings_set(ai_config_t *config, chat_setting_t field, 
         status = ai_config_parser_finish(&scratch_parser);
     }
     if (status == AI_CONFIG_OK) {
-        store(config, field, &scratch_config);
+        /* Apply to a copy first: the change must leave the whole
+         * configuration valid for its provider. */
+        candidate = *config;
+        store(&candidate, field, &scratch_config);
+        status = ai_config_validate(&candidate);
+        if (status == AI_CONFIG_OK) {
+            *config = candidate;
+        }
+        memset(&candidate, 0, sizeof(candidate));
     } else if (field == CHAT_SETTING_TEMPERATURE && status == AI_CONFIG_OUT_OF_RANGE) {
         status = AI_CONFIG_INVALID_VALUE;
     }
@@ -256,6 +280,9 @@ size_t chat_settings_format(const ai_config_t *config, chat_setting_t field, cha
             break;
         case CHAT_SETTING_UTC_OFFSET:
             written = snprintf(out, capacity, "%d", (int)config->utc_offset_minutes);
+            break;
+        case CHAT_SETTING_API_KEY:
+            written = snprintf(out, capacity, "%s", config->bearer_token[0] != '\0' ? "********" : "");
             break;
         default:
             break;

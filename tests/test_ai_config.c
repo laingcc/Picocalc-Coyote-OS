@@ -350,6 +350,146 @@ static void check_utc_offset(void) {
     CHECK(ai_config_serialize(&config, output, sizeof(output), &length) == AI_CONFIG_INVALID_VALUE);
 }
 
+static void check_deepseek_defaults(void) {
+    ai_config_t config;
+    ai_config_parser_t parser;
+    char text[1024];
+    size_t length = 0u;
+
+    /* A file that only names the provider gets DeepSeek's endpoint and the
+     * default model.  The literals are spelled out, not taken from the code. */
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nbearer_token=sk-test-not-a-real-key\n", 5u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "deepseek");
+    CHECK_STR_EQ(config.host, "api.deepseek.com");
+    CHECK(config.port == 443u);
+    CHECK_STR_EQ(config.model, "deepseek-chat");
+    CHECK_STR_EQ(config.bearer_token, "sk-test-not-a-real-key");
+    CHECK(ai_config_is_deepseek(&config));
+    CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
+
+    /* Key order does not matter, and an empty model takes the default. */
+    CHECK(parse_text(&config, &parser, "model=\nport=443\nhost=api.deepseek.com\nprovider=deepseek\n", 3u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.model, "deepseek-chat");
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK(parse_text(&config, &parser, "model=deepseek-reasoner\nprovider=deepseek\n", 99u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.model, "deepseek-reasoner");
+
+    /* It round-trips through the serializer. */
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
+    CHECK(strstr(text, "provider=deepseek\n") != NULL);
+    CHECK(strstr(text, "host=api.deepseek.com\n") != NULL);
+    CHECK(strstr(text, "port=443\n") != NULL);
+    CHECK(strstr(text, "model=deepseek-reasoner\n") != NULL);
+    {
+        ai_config_t again;
+        CHECK(parse_text(&again, &parser, text, 1u) == AI_CONFIG_OK);
+        CHECK(memcmp(&again, &config, sizeof(config)) == 0);
+    }
+
+    /* The other providers are untouched by any of this. */
+    CHECK(parse_text(&config, &parser, "provider=ollama\nhost=wang.local\nmodel=llama3.2:1b\nbearer_token=any thing\n", 99u) == AI_CONFIG_OK);
+    CHECK(!ai_config_is_deepseek(&config));
+    CHECK(config.port == 11434u);
+    CHECK(parse_text(&config, &parser, "provider=muse\nhost=muse.local\nport=8443\nmodel=deepseek-chat\n", 99u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "muse.local");
+    CHECK(!ai_config_is_deepseek(NULL));
+}
+
+static void check_deepseek_validation(void) {
+    ai_config_t config;
+    ai_config_parser_t parser;
+    char text[1024];
+    size_t length = 99u;
+
+    /* The API key is only ever sent to DeepSeek: no other host or port. */
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nhost=evil.example\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "host");
+    CHECK(parse_text(&config, &parser, "host=api.deepseek.com.evil.example\nprovider=deepseek\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nhost=API.DEEPSEEK.COM\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nport=80\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "port");
+    CHECK(parse_text(&config, &parser, "port=11434\nprovider=deepseek\n", 4u) == AI_CONFIG_INVALID_VALUE);
+
+    /* Only the known models. */
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nmodel=gpt-4o\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "model");
+    CHECK(parse_text(&config, &parser, "model=deepseek-coder\nprovider=deepseek\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nmodel=DeepSeek-Chat\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(ai_config_deepseek_model_known("deepseek-chat"));
+    CHECK(ai_config_deepseek_model_known("deepseek-reasoner"));
+    CHECK(!ai_config_deepseek_model_known("deepseek-chat-v2"));
+    CHECK(!ai_config_deepseek_model_known("deepseek"));
+    CHECK(!ai_config_deepseek_model_known(""));
+    CHECK(!ai_config_deepseek_model_known(NULL));
+
+    /* The key must be usable as a bearer token as it stands. */
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nbearer_token=sk has space\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "bearer_token");
+    CHECK(parse_text(&config, &parser, "bearer_token=sk-\"q\"\nprovider=deepseek\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(parse_text(&config, &parser, "provider=deepseek\nbearer_token=sk:colon\n", 99u) == AI_CONFIG_INVALID_VALUE);
+    CHECK(ai_config_bearer_token_valid("sk-0123456789abcdefABCDEF._~+/=="));
+    CHECK(!ai_config_bearer_token_valid(""));
+    CHECK(!ai_config_bearer_token_valid("a=b"));
+    CHECK(!ai_config_bearer_token_valid("caf\xc3\xa9"));
+
+    /* The serializer refuses to write what the parser would refuse to read. */
+    ai_config_init(&config);
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
+    strcpy(config.host, "evil.example");
+    CHECK(ai_config_validate(&config) == AI_CONFIG_INVALID_VALUE);
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_INVALID_VALUE);
+    CHECK(length == 0u);
+    strcpy(config.host, "api.deepseek.com");
+    config.port = 8443u;
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_INVALID_VALUE);
+    config.port = 443u;
+    strcpy(config.model, "other");
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_INVALID_VALUE);
+    strcpy(config.model, "deepseek-chat");
+    strcpy(config.bearer_token, "bad token");
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_INVALID_VALUE);
+    strcpy(config.bearer_token, "good-token");
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
+    CHECK(ai_config_validate(NULL) == AI_CONFIG_INVALID_ARGUMENT);
+}
+
+static void check_set_provider(void) {
+    ai_config_t config;
+
+    ai_config_init(&config);
+    strcpy(config.host, "wang.local");
+    strcpy(config.model, "llama3.2:1b");
+    strcpy(config.bearer_token, "kept");
+    config.port = 8080u;
+
+    /* The same provider again changes nothing. */
+    CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "wang.local");
+    CHECK(config.port == 8080u);
+
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "deepseek");
+    CHECK_STR_EQ(config.host, "api.deepseek.com");
+    CHECK(config.port == 443u);
+    CHECK_STR_EQ(config.model, "deepseek-chat");
+    CHECK_STR_EQ(config.bearer_token, "kept");
+    CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
+
+    /* Leaving DeepSeek does not carry its endpoint to the next provider. */
+    CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "ollama");
+    CHECK_STR_EQ(config.host, "");
+    CHECK(config.port == 11434u);
+    CHECK_STR_EQ(config.model, "");
+
+    CHECK(ai_config_set_provider(&config, "openai") == AI_CONFIG_INVALID_VALUE);
+    CHECK(ai_config_set_provider(&config, "") == AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(config.provider, "ollama");
+    CHECK(ai_config_set_provider(NULL, "ollama") == AI_CONFIG_INVALID_ARGUMENT);
+    CHECK(ai_config_set_provider(&config, NULL) == AI_CONFIG_INVALID_ARGUMENT);
+}
+
 void test_ai_config(void) {
     check_defaults();
     check_incremental_parse();
@@ -362,4 +502,7 @@ void test_ai_config(void) {
     check_utc_offset();
     check_null_safety();
     check_system_prompt_and_temperature();
+    check_deepseek_defaults();
+    check_deepseek_validation();
+    check_set_provider();
 }

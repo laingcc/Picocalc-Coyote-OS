@@ -104,7 +104,7 @@ static void fake_tcp_abort(void *context) {
 
 static const http_stream_ops_t fake_ops = {
     fake_clock_ms, fake_link_up, fake_dns_resolve, fake_tcp_connect,
-    fake_tcp_write, fake_tcp_close, fake_tcp_abort,
+    fake_tcp_write, fake_tcp_close, fake_tcp_abort, NULL,
 };
 
 /* ------------------------------------------------------------------------ */

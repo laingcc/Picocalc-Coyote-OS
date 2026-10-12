@@ -32,6 +32,7 @@ add_executable(coyote
         ai/json_stream.c
         ai/http_parser.c
         ai/ollama_provider.c
+        ai/deepseek_provider.c
         ai/chat_model.c
         ai/chat_request.c
         ai/chat_settings.c
@@ -97,10 +98,13 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define LWIP_SOCKET                 0
 #define LWIP_NETCONN                0
 
-/* lwIP allocates from its own fixed pools, never the C heap. */
+/* lwIP allocates from its own fixed pools, never the C heap.  The heap also
+ * serves mbedTLS (tls/mbedtls_config.h): a TLS connection needs about 50 KB
+ * at the peak of its handshake, most of it the 16 KB record buffer, the
+ * parsed certificates and the RSA arithmetic. */
 #define MEM_LIBC_MALLOC             0
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    8000
+#define MEM_SIZE                    (96 * 1024)
 #define MEMP_NUM_TCP_PCB            2
 #define MEMP_NUM_TCP_SEG            16
 #define MEMP_NUM_ARP_QUEUE          8
@@ -108,7 +112,7 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define MEMP_NUM_UDP_PCB            6
 /* The SNTP client keeps up to two timers of its own. */
 #define MEMP_NUM_SYS_TIMEOUT        (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 2)
-#define PBUF_POOL_SIZE              16
+#define PBUF_POOL_SIZE              24
 
 #define LWIP_ARP                    1
 #define LWIP_ETHERNET               1
@@ -124,7 +128,9 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define LWIP_DNS_SUPPORT_MDNS_QUERIES 1
 
 #define TCP_MSS                     1460
-#define TCP_WND                     (4 * TCP_MSS)
+/* At least one full TLS record (16384 bytes), which is only acknowledged to
+ * the peer once it has all arrived and been decrypted. */
+#define TCP_WND                     (12 * TCP_MSS)
 #define TCP_SND_BUF                 (2 * TCP_MSS)
 #define TCP_SND_QUEUELEN            ((4 * (TCP_SND_BUF) + (TCP_MSS - 1)) / (TCP_MSS))
 #define LWIP_TCP_KEEPALIVE          1
@@ -136,6 +142,14 @@ if (TARGET pico_cyw43_arch_lwip_poll)
 #define DHCP_DOES_ARP_CHECK         0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
 #define LWIP_CHKSUM_ALGORITHM       3
+
+/* TLS for the DeepSeek provider: lwIP's altcp layer over mbedTLS.  The peer's
+ * certificate must verify; lwIP's default would only ask for one.
+ * ai/app_services.c refuses to build if this is weakened. */
+#define LWIP_ALTCP                  1
+#define LWIP_ALTCP_TLS              1
+#define LWIP_ALTCP_TLS_MBEDTLS      1
+#define ALTCP_MBEDTLS_AUTHMODE      MBEDTLS_SSL_VERIFY_REQUIRED
 
 /* SNTP client (time/time_service.c): look the server up by name, ask as soon as
  * it is started and then hourly, and only accept an answer from the address
@@ -160,9 +174,11 @@ void time_service_on_sntp(uint32_t epoch);
 ]=])
     # Copy only when the content changes so reconfiguring does not rebuild lwIP.
     configure_file(${COYOTE_GENERATED_DIR}/lwipopts.h.in ${COYOTE_GENERATED_DIR}/lwipopts.h COPYONLY)
-    target_include_directories(coyote PRIVATE ${COYOTE_GENERATED_DIR})
+    # tls/ holds mbedtls_config.h, which the SDK's mbedTLS build looks up by name.
+    target_include_directories(coyote PRIVATE ${COYOTE_GENERATED_DIR} ${CMAKE_CURRENT_LIST_DIR}/tls)
+    target_sources(coyote PRIVATE tls/tls_trust.c tls/tls_clock.c)
     target_compile_definitions(coyote PRIVATE COYOTE_HAS_WIFI=1)
-    target_link_libraries(coyote PRIVATE pico_cyw43_arch_lwip_poll pico_lwip_sntp)
+    target_link_libraries(coyote PRIVATE pico_cyw43_arch_lwip_poll pico_lwip_sntp pico_lwip_mbedtls pico_mbedtls)
 else()
     message(WARNING "PICO_BOARD has no CYW43 radio: building without Wi-Fi (use -DPICO_BOARD=pico2_w)")
 endif()

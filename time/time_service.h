@@ -41,6 +41,10 @@ time_sync_state_t time_service_state(void);
  * alone, if no time is known yet. */
 bool time_service_now(uint32_t *epoch);
 
+/* The current UTC time, only once SNTP has set it since boot; see
+ * time_sync_trusted_now.  This is the only clock TLS is given. */
+bool time_service_trusted_now(uint32_t *epoch);
+
 /* The clock for a status line, in local time; see time_sync_label. */
 int time_service_label(int utc_offset_minutes, char *buffer, size_t capacity);
 

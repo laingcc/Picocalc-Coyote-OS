@@ -124,6 +124,7 @@ static ai_config_t configured, saved;
 static int configure_calls, save_calls, chat_start_calls, text_redraws;
 static wifi_state_t wifi_state;
 static bool chat_active;
+static deepseek_start_t deepseek_ready;
 
 void app_services_poll(void) {}
 
@@ -151,6 +152,8 @@ int app_services_chat_start(const ollama_message_t *messages, size_t message_cou
     chat_active = true;
     return 0;
 }
+
+deepseek_start_t app_services_deepseek_ready(void) { return deepseek_ready; }
 
 void app_services_chat_cancel(void) { chat_active = false; }
 bool app_services_chat_active(void) { return chat_active; }
@@ -189,7 +192,7 @@ void reset_usb_boot(uint32_t gpio_activity_pin_mask, uint32_t disable_interface_
 
 /* Rows of the Connection settings list, top to bottom. */
 enum { ROW_HOST = 2, ROW_PORT = 3, ROW_PASSWORD = 5, ROW_SYSTEM_PROMPT = 10, ROW_TEMPERATURE = 11,
-       ROW_UTC_OFFSET = 12, ROW_APPLY = 13 };
+       ROW_UTC_OFFSET = 12, ROW_API_KEY = 13, ROW_APPLY = 14 };
 
 /* HOME, then down to Connection settings from wherever the menu starts
  * (it starts on the current mode: Text, Calculator, Chat). */
@@ -220,7 +223,7 @@ static void check_apply_from_calculator(void) {
     press(KEY_DOWN); press(KEY_ENTER); type_line("1.5");
     press(KEY_DOWN); press(KEY_ENTER); type_line("-300");
     press(SNAP);
-    press(KEY_DOWN); press(KEY_ENTER);
+    press_times(KEY_DOWN, ROW_APPLY - ROW_UTC_OFFSET); press(KEY_ENTER);
     ui_show_mode_menu();
 
     CHECK(script_consumed());
@@ -250,6 +253,7 @@ static void check_apply_from_calculator(void) {
     CHECK(shows(snapshots[1], " System prompt: "));
     CHECK(shows(snapshots[1], " Temperature: 0.80 "));
     CHECK(shows(snapshots[1], " UTC offset min: 0 "));
+    CHECK(shows(snapshots[1], " API key: (none) "));
     CHECK(shows(snapshots[1], " Apply & connect "));
 
     /* Edits show in the list; the stored password does not. */
@@ -428,6 +432,107 @@ static void check_apply_cancels_a_streaming_reply(void) {
     CHECK(shows(screen, "> hi"));
 }
 
+/* Not a real key: a made-up value in the shape of one. */
+#define TEST_KEY "sk-0000000000000000000000000000test"
+
+/* Choosing DeepSeek from the chat menu, giving it a key, and what the chat
+ * does with it. */
+static void check_deepseek_setup(void) {
+    int before_configure = configure_calls, before_start = chat_start_calls;
+
+    script_begin();
+    press(KEY_DOWN); press(KEY_ENTER);  /* F5 > Provider */
+    press(SNAP);
+    press(KEY_DOWN); press(KEY_ENTER);  /* deepseek */
+    press(SNAP);
+    press(KEY_DOWN); press(KEY_ENTER);  /* Connection settings */
+    press_times(KEY_DOWN, ROW_API_KEY); press(KEY_ENTER);
+    for (const char *c = TEST_KEY; *c; c++) press((unsigned char)*c);
+    press(SNAP);                        /* the prompt, fully typed */
+    press(KEY_ENTER);
+    press(SNAP);                        /* the plain-text warning */
+    press(KEY_ENTER);
+    press(SNAP);                        /* back in the list */
+    press(KEY_DOWN); press(KEY_ENTER);  /* Apply & connect */
+    press(KEY_ESC);
+    chat_mode_handle_input(KEY_F5);
+
+    CHECK(script_consumed());
+    CHECK(snapshot_count == 5);
+    CHECK(shows(snapshots[0], " PROVIDER "));
+    CHECK(shows(snapshots[0], " ollama "));
+    CHECK(shows(snapshots[0], " deepseek "));
+    /* The provider brought DeepSeek's endpoint and default model with it. */
+    CHECK(shows(snapshots[1], " Provider: deepseek "));
+    CHECK(shows(snapshots[1], " Model: deepseek-chat "));
+    /* The key is never on screen: not while typed, not in the list. */
+    CHECK(shows(snapshots[2], " API key "));
+    CHECK(shows(snapshots[2], "**********_"));
+    CHECK(shows(snapshots[3], " Kept unencrypted on SD "));
+    CHECK(shows(snapshots[4], " API key: ******** "));
+    CHECK(shows(snapshots[4], " Host: api.deepseek.com "));
+    CHECK(shows(snapshots[4], " Port: 443 "));
+    for (int i = 0; i < snapshot_count; i++) {
+        CHECK(!shows(snapshots[i], "sk-"));
+        CHECK(!shows(snapshots[i], "00000000"));
+        CHECK(!shows(snapshots[i], "test"));
+    }
+    CHECK(!shows(screen, "sk-"));
+
+    CHECK(configure_calls == before_configure + 2);
+    CHECK_STR_EQ(configured.provider, "deepseek");
+    CHECK_STR_EQ(configured.host, "api.deepseek.com");
+    CHECK(configured.port == 443u);
+    CHECK_STR_EQ(configured.model, "deepseek-chat");
+    CHECK_STR_EQ(configured.bearer_token, TEST_KEY);
+    CHECK_STR_EQ(saved.bearer_token, TEST_KEY);
+
+    /* The host cannot be pointed elsewhere while DeepSeek is the provider. */
+    script_begin();
+    open_settings_from(MODE_CHAT);
+    press_times(KEY_DOWN, ROW_HOST); press(KEY_ENTER); type_line("evil.example");
+    press(SNAP);
+    press(KEY_ENTER); /* dismiss the notice */
+    press(SNAP);
+    press(KEY_ESC);
+    ui_show_mode_menu();
+    CHECK(script_consumed());
+    CHECK(shows(snapshots[0], " NOT CHANGED "));
+    CHECK(shows(snapshots[1], " Host: api.deepseek.com "));
+
+    /* The model is picked from the known two, not typed. */
+    script_begin();
+    press(KEY_ENTER);                   /* F5 > Model */
+    press(SNAP);
+    press(KEY_DOWN); press(KEY_ENTER);  /* deepseek-reasoner */
+    press(KEY_ESC);
+    chat_mode_handle_input(KEY_F5);
+    CHECK(script_consumed());
+    CHECK(shows(snapshots[0], " MODEL "));
+    CHECK(shows(snapshots[0], " deepseek-chat "));
+    CHECK(shows(snapshots[0], " deepseek-reasoner "));
+    CHECK_STR_EQ(configured.model, "deepseek-reasoner");
+
+    /* Until the clock has been set over the network nothing is sent, and the
+     * status line says why. */
+    deepseek_ready = DEEPSEEK_START_CLOCK_NOT_SYNCED;
+    chat_mode_handle_input('h');
+    chat_mode_handle_input(KEY_ENTER);
+    CHECK(chat_start_calls == before_start);
+    CHECK(shows(screen, "clock not synced: wait"));
+    deepseek_ready = DEEPSEEK_START_NO_KEY;
+    chat_mode_handle_input(KEY_ENTER);
+    CHECK(chat_start_calls == before_start);
+    CHECK(shows(screen, "set the API key (F5)"));
+
+    deepseek_ready = DEEPSEEK_START_OK;
+    chat_mode_handle_input(KEY_ENTER);
+    CHECK(chat_start_calls == before_start + 1);
+    CHECK(shows(screen, "streaming"));
+    chat_mode_handle_input(KEY_ESC);
+    CHECK(!shows(screen, "sk-"));
+}
+
 void test_mode_menu(void) {
     ui_init();
     chat_mode_init();
@@ -441,4 +546,5 @@ void test_mode_menu(void) {
     check_chat_mode_stays_in_front();
     check_chat_menu_is_unchanged();
     check_apply_cancels_a_streaming_reply();
+    check_deepseek_setup();
 }

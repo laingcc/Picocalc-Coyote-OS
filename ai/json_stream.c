@@ -309,6 +309,18 @@ static int skip_value(const char **cursor, int depth) {
     return -1;
 }
 
+const char *json_scan_whitespace(const char *p) {
+    return skip_whitespace(p);
+}
+
+int json_scan_string(const char **cursor, char *out, size_t out_cap, size_t *out_length, bool *overflow) {
+    return parse_string(cursor, out, out_cap, out_length, overflow);
+}
+
+int json_scan_skip_value(const char **cursor) {
+    return skip_value(cursor, 0);
+}
+
 /*
  * Parse the "message" object of an Ollama record, extracting an optional
  * "content" string.  Unknown members are skipped.

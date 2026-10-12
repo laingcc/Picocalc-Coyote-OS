@@ -39,7 +39,9 @@
  * into a failed state and return -1.
  */
 
-#define HTTP_PARSER_HEADER_MAX 1024u
+/* Sized for a CDN-fronted API: DeepSeek answers through CloudFront, whose
+ * tracing and policy headers alone run to several hundred bytes. */
+#define HTTP_PARSER_HEADER_MAX 2048u
 #define HTTP_PARSER_CHUNK_LINE_MAX 32u
 #define HTTP_PARSER_CHUNK_MAX 65536u
 

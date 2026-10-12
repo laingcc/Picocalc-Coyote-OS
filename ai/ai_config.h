@@ -9,7 +9,7 @@
 /* Capacities include the trailing NUL. */
 #define AI_CONFIG_SSID_CAPACITY 33u
 #define AI_CONFIG_PASSWORD_CAPACITY 65u
-#define AI_CONFIG_PROVIDER_CAPACITY 7u
+#define AI_CONFIG_PROVIDER_CAPACITY 9u
 #define AI_CONFIG_HOST_CAPACITY 254u
 #define AI_CONFIG_MODEL_CAPACITY 129u
 #define AI_CONFIG_BEARER_TOKEN_CAPACITY 257u
@@ -34,6 +34,22 @@
 /* UTC-12:00 to UTC+14:00, the span of offsets in civil use. */
 #define AI_CONFIG_UTC_OFFSET_MINUTES_MIN (-720)
 #define AI_CONFIG_UTC_OFFSET_MINUTES_MAX 840
+
+#define AI_CONFIG_PROVIDER_OLLAMA "ollama"
+#define AI_CONFIG_PROVIDER_MUSE "muse"
+#define AI_CONFIG_PROVIDER_DEEPSEEK "deepseek"
+#define AI_CONFIG_OLLAMA_PORT 11434u
+
+/*
+ * The "deepseek" provider talks straight to DeepSeek over verified TLS.  Its
+ * endpoint is fixed: the API key in bearer_token is only ever sent to this
+ * host and port, so a configuration naming any other is rejected.  The model
+ * must be one of the two below.
+ */
+#define AI_CONFIG_DEEPSEEK_HOST "api.deepseek.com"
+#define AI_CONFIG_DEEPSEEK_PORT 443u
+#define AI_CONFIG_DEEPSEEK_MODEL_DEFAULT "deepseek-chat"
+#define AI_CONFIG_DEEPSEEK_MODEL_REASONER "deepseek-reasoner"
 
 typedef enum {
     AI_CONFIG_OK = 0,
@@ -80,8 +96,32 @@ typedef struct {
 } ai_config_parser_t;
 
 ai_config_status_t ai_config_init(ai_config_t *config);
+
+int ai_config_is_deepseek(const ai_config_t *config);
+int ai_config_deepseek_model_known(const char *model);
+/* True for a non-empty RFC 6750 b64token (letters, digits, "-._~+/" and
+ * trailing "="): the only text that may follow "Authorization: Bearer ". */
+int ai_config_bearer_token_valid(const char *token);
+
+/*
+ * Check the rules that span fields.  A "deepseek" configuration must name the
+ * fixed DeepSeek host and port and a known model, and its bearer_token (the
+ * API key) must be empty or a valid bearer token.  Returns AI_CONFIG_OK or
+ * AI_CONFIG_INVALID_VALUE.  The parser and the serializer both apply it.
+ */
+ai_config_status_t ai_config_validate(const ai_config_t *config);
+
+/*
+ * Switch provider.  Moving to "deepseek" sets its fixed host and port and the
+ * default model; moving away from it clears the host and model and restores
+ * the Ollama port, so the DeepSeek endpoint is never carried over.  Setting
+ * the provider already in use changes nothing.  bearer_token is left alone.
+ */
+ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provider);
 ai_config_status_t ai_config_parser_init(ai_config_parser_t *parser, ai_config_t *config);
 ai_config_status_t ai_config_parser_feed(ai_config_parser_t *parser, const void *data, size_t length);
+/* A "deepseek" file may leave out host, port and model: they take the DeepSeek
+ * defaults.  The cross-field rules of ai_config_validate are applied here. */
 ai_config_status_t ai_config_parser_finish(ai_config_parser_t *parser);
 const char *ai_config_parser_error_key(const ai_config_parser_t *parser);
 ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destination,

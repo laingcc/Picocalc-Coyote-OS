@@ -83,6 +83,32 @@ bool time_sync_now(const time_sync_t *sync, uint32_t *epoch) {
     return true;
 }
 
+bool time_sync_trusted_now(const time_sync_t *sync, uint32_t *epoch) {
+    if (sync->state != TIME_SYNC_SYNCED) {
+        return false;
+    }
+    return time_sync_now(sync, epoch);
+}
+
+/* Days since 1970-01-01 to a proleptic Gregorian date (the civil_from_days
+ * algorithm), restricted to the non-negative days a uint32_t epoch can hold. */
+void time_sync_civil(uint32_t epoch, time_sync_civil_t *civil) {
+    uint32_t seconds = epoch % 86400u;
+    uint32_t z = epoch / 86400u + 719468u;
+    uint32_t era = z / 146097u;
+    uint32_t doe = z - era * 146097u;
+    uint32_t yoe = (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
+    uint32_t doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
+    uint32_t mp = (5u * doy + 2u) / 153u;
+
+    civil->day = (int)(doy - (153u * mp + 2u) / 5u + 1u);
+    civil->month = (int)(mp < 10u ? mp + 3u : mp - 9u);
+    civil->year = (int)(yoe + era * 400u) + (civil->month <= 2 ? 1 : 0);
+    civil->hour = (int)(seconds / 3600u);
+    civil->minute = (int)(seconds / 60u % 60u);
+    civil->second = (int)(seconds % 60u);
+}
+
 int time_sync_format_hhmm(uint32_t epoch, char *buffer, size_t capacity) {
     uint32_t minutes = epoch / 60u % (24u * 60u);
 
