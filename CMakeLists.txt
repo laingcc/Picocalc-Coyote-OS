@@ -32,7 +32,12 @@ add_executable(coyote
         ai/json_stream.c
         ai/http_parser.c
         ai/ollama_provider.c
+        ai/sse_provider.c
+        ai/openai_compat.c
         ai/deepseek_provider.c
+        ai/claude_provider.c
+        ai/gemini_provider.c
+        ai/cloud_provider.c
         ai/chat_model.c
         ai/chat_request.c
         ai/chat_settings.c

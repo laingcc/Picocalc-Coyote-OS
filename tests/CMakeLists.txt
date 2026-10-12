@@ -26,7 +26,12 @@ add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/ai/json_stream.c"
     "${COYOTE_ROOT}/ai/http_parser.c"
     "${COYOTE_ROOT}/ai/ollama_provider.c"
+    "${COYOTE_ROOT}/ai/sse_provider.c"
+    "${COYOTE_ROOT}/ai/openai_compat.c"
     "${COYOTE_ROOT}/ai/deepseek_provider.c"
+    "${COYOTE_ROOT}/ai/claude_provider.c"
+    "${COYOTE_ROOT}/ai/gemini_provider.c"
+    "${COYOTE_ROOT}/ai/cloud_provider.c"
     "${COYOTE_ROOT}/ai/chat_model.c"
     "${COYOTE_ROOT}/ai/chat_request.c"
     "${COYOTE_ROOT}/ai/chat_settings.c"
@@ -68,6 +73,10 @@ add_executable(coyote_ai_tests
     test_http_parser.c
     test_ollama_provider.c
     test_deepseek_provider.c
+    test_openai_compat.c
+    test_claude_provider.c
+    test_gemini_provider.c
+    test_cloud_provider.c
     test_http_tls.c
     test_tls_trust.c
     test_chat_model.c

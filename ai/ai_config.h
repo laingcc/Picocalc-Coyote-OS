@@ -38,18 +38,40 @@
 #define AI_CONFIG_PROVIDER_OLLAMA "ollama"
 #define AI_CONFIG_PROVIDER_MUSE "muse"
 #define AI_CONFIG_PROVIDER_DEEPSEEK "deepseek"
+#define AI_CONFIG_PROVIDER_OPENAI "openai"
+#define AI_CONFIG_PROVIDER_MISTRAL "mistral"
+#define AI_CONFIG_PROVIDER_GEMINI "gemini"
+#define AI_CONFIG_PROVIDER_CLAUDE "claude"
 #define AI_CONFIG_OLLAMA_PORT 11434u
 
 /*
- * The "deepseek" provider talks straight to DeepSeek over verified TLS.  Its
- * endpoint is fixed: the API key in bearer_token is only ever sent to this
- * host and port, so a configuration naming any other is rejected.  The model
- * must be one of the two below.
+ * The cloud providers ("deepseek", "openai", "mistral", "gemini", "claude")
+ * are reached directly over verified TLS.  Each one's endpoint is fixed: the
+ * API key in bearer_token is only ever sent to that provider's host on port
+ * 443, so a configuration naming any other host or port is rejected, and the
+ * model must be one of the provider's listed models.  There is no way to
+ * name a host, path or model of one's own for a cloud provider.
  */
+#define AI_CONFIG_CLOUD_PORT 443u
+#define AI_CONFIG_CLOUD_MAX 5u /* how many cloud providers there are */
+#define AI_CONFIG_CLOUD_MODELS_MAX 3u
+
 #define AI_CONFIG_DEEPSEEK_HOST "api.deepseek.com"
-#define AI_CONFIG_DEEPSEEK_PORT 443u
+#define AI_CONFIG_DEEPSEEK_PORT AI_CONFIG_CLOUD_PORT
 #define AI_CONFIG_DEEPSEEK_MODEL_DEFAULT "deepseek-chat"
 #define AI_CONFIG_DEEPSEEK_MODEL_REASONER "deepseek-reasoner"
+
+#define AI_CONFIG_OPENAI_HOST "api.openai.com"
+#define AI_CONFIG_MISTRAL_HOST "api.mistral.ai"
+#define AI_CONFIG_GEMINI_HOST "generativelanguage.googleapis.com"
+#define AI_CONFIG_CLAUDE_HOST "api.anthropic.com"
+
+typedef struct {
+    const char *name; /* the "provider" value */
+    const char *host;
+    /* The models that may be chosen, the default first; unused entries NULL. */
+    const char *models[AI_CONFIG_CLOUD_MODELS_MAX];
+} ai_config_cloud_t;
 
 typedef enum {
     AI_CONFIG_OK = 0,
@@ -99,29 +121,45 @@ ai_config_status_t ai_config_init(ai_config_t *config);
 
 int ai_config_is_deepseek(const ai_config_t *config);
 int ai_config_deepseek_model_known(const char *model);
+
+/* The cloud providers, in the order menus list them. */
+size_t ai_config_cloud_count(void);
+const ai_config_cloud_t *ai_config_cloud_at(size_t index);
+/* The entry for a provider name, or NULL if it is not a cloud provider. */
+const ai_config_cloud_t *ai_config_cloud_find(const char *provider);
+/* The entry for config's provider, or NULL ("ollama", "muse", or NULL). */
+const ai_config_cloud_t *ai_config_cloud(const ai_config_t *config);
+size_t ai_config_cloud_model_count(const ai_config_cloud_t *cloud);
+int ai_config_cloud_model_known(const ai_config_cloud_t *cloud, const char *model);
+
 /* True for a non-empty RFC 6750 b64token (letters, digits, "-._~+/" and
- * trailing "="): the only text that may follow "Authorization: Bearer ". */
+ * trailing "="): the only text that may follow "Authorization: Bearer ".  The
+ * same rule is applied to a key sent in a header of its own. */
 int ai_config_bearer_token_valid(const char *token);
 
 /*
- * Check the rules that span fields.  A "deepseek" configuration must name the
- * fixed DeepSeek host and port and a known model, and its bearer_token (the
- * API key) must be empty or a valid bearer token.  Returns AI_CONFIG_OK or
- * AI_CONFIG_INVALID_VALUE.  The parser and the serializer both apply it.
+ * Check the rules that span fields.  A cloud provider's configuration must
+ * name that provider's fixed host and port and one of its models, and its
+ * bearer_token (the API key) must be empty or a valid bearer token.  Returns
+ * AI_CONFIG_OK or AI_CONFIG_INVALID_VALUE.  The parser and the serializer
+ * both apply it.
  */
 ai_config_status_t ai_config_validate(const ai_config_t *config);
 
 /*
- * Switch provider.  Moving to "deepseek" sets its fixed host and port and the
- * default model; moving away from it clears the host and model and restores
- * the Ollama port, so the DeepSeek endpoint is never carried over.  Setting
- * the provider already in use changes nothing.  bearer_token is left alone.
+ * Switch provider.  Moving to a cloud provider sets its fixed host and port
+ * and its default model.  Moving away from one clears the host and model,
+ * restores the Ollama port when the new provider is not a cloud one, and
+ * clears bearer_token: that key belongs to the provider being left and must
+ * never be offered to another host.  Otherwise bearer_token is left alone.
+ * Setting the provider already in use changes nothing.
  */
 ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provider);
 ai_config_status_t ai_config_parser_init(ai_config_parser_t *parser, ai_config_t *config);
 ai_config_status_t ai_config_parser_feed(ai_config_parser_t *parser, const void *data, size_t length);
-/* A "deepseek" file may leave out host, port and model: they take the DeepSeek
- * defaults.  The cross-field rules of ai_config_validate are applied here. */
+/* A cloud provider's file may leave out host, port and model: they take that
+ * provider's own.  The cross-field rules of ai_config_validate are applied
+ * here. */
 ai_config_status_t ai_config_parser_finish(ai_config_parser_t *parser);
 const char *ai_config_parser_error_key(const ai_config_parser_t *parser);
 ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destination,

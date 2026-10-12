@@ -154,6 +154,7 @@ int app_services_chat_start(const ollama_message_t *messages, size_t message_cou
 }
 
 deepseek_start_t app_services_deepseek_ready(void) { return deepseek_ready; }
+cloud_start_t app_services_cloud_ready(void) { return deepseek_ready; }
 
 void app_services_chat_cancel(void) { chat_active = false; }
 bool app_services_chat_active(void) { return chat_active; }

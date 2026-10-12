@@ -37,6 +37,7 @@ static char note[NOTE_MAX + 1];
 static char status_drawn[COLS + 1];
 static char setting_labels[CHAT_SETTING_COUNT + 1][32];
 static char scan_labels[WIFI_SCAN_MAX_NETWORKS][32];
+static char choice_labels[1 + AI_CONFIG_CLOUD_MAX][32]; /* provider or model choices */
 static char conv_titles[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 1u];
 static char conv_labels[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 3u];
 static const char *conv_label_ptrs[CONV_STORE_MAX_CONVERSATIONS];
@@ -208,16 +209,6 @@ static const char *stream_error_text(http_stream_error_t error) {
     }
 }
 
-/* What DeepSeek's error statuses mean; its error bodies are never shown. */
-static const char *deepseek_status_text(int status) {
-    switch (status) {
-        case 401: return "API key rejected";
-        case 402: return "no DeepSeek balance";
-        case 429: return "rate limited: try later";
-        default: return NULL;
-    }
-}
-
 /* Runs inside app_services_poll, possibly while a menu is open or another
  * mode is in front, so it only updates the transcript and flags a repaint. */
 static void on_provider_event(void *context, const provider_event_t *event) {
@@ -253,7 +244,8 @@ static void sync_with_transport(void) {
     } else {
         chat_model_fail_response(&chat);
         if (app_services_chat_error() == HTTP_STREAM_ERROR_HTTP_STATUS) {
-            const char *reason = ai_config_is_deepseek(&config) ? deepseek_status_text(app_services_chat_status_code()) : NULL;
+            /* What a cloud provider's status means; its error body is never shown. */
+            const char *reason = cloud_provider_status_text(config.provider, app_services_chat_status_code());
             if (reason) set_note(reason);
             else snprintf(note, sizeof(note), "HTTP %d", app_services_chat_status_code());
         } else set_note(stream_error_text(app_services_chat_error()));
@@ -277,10 +269,10 @@ static void send(void) {
     if (!config.model[0]) { set_note("set a model (F5)"); return; }
     if (!config.host[0]) { set_note("set host (F5)"); return; }
     if (app_services_wifi_state() != WIFI_STATE_ONLINE) { set_note("Wi-Fi not online"); return; }
-    /* DeepSeek is refused here, before anything is sent, until it has a key
-     * and the clock has been set over the network (certificates need it). */
-    if (ai_config_is_deepseek(&config) && app_services_deepseek_ready() != DEEPSEEK_START_OK) {
-        set_note(deepseek_provider_start_text(app_services_deepseek_ready()));
+    /* A cloud provider is refused here, before anything is sent, until it has
+     * a key and the clock has been set over the network (certificates need it). */
+    if (ai_config_cloud(&config) != NULL && app_services_cloud_ready() != CLOUD_START_OK) {
+        set_note(cloud_provider_start_text(app_services_cloud_ready()));
         return;
     }
     if (app_services_chat_active()) { set_note("busy"); return; }
@@ -412,23 +404,39 @@ static void ssid_menu(ai_config_t *target) {
     else if (sel == 1) edit_setting(target, CHAT_SETTING_SSID);
 }
 
-/* Choose the provider.  Changing it also moves the host, port and model to
- * the new provider's own (see ai_config_set_provider). */
+/* Choose the provider: Ollama, then the cloud providers.  Changing it also
+ * moves the host, port and model to the new provider's own, and drops the API
+ * key of a cloud provider being left (see ai_config_set_provider). */
 static bool pick_provider(ai_config_t *target) {
-    static const char *const labels[] = {" ollama ", " deepseek "};
-    static const char *const names[] = {AI_CONFIG_PROVIDER_OLLAMA, AI_CONFIG_PROVIDER_DEEPSEEK};
-    int sel = menu(" PROVIDER ", labels, 2, ai_config_is_deepseek(target) ? 1 : 0);
+    const char *labels[1 + AI_CONFIG_CLOUD_MAX], *names[1 + AI_CONFIG_CLOUD_MAX];
+    int count = 1 + (int)ai_config_cloud_count(), current = 0, sel;
+
+    names[0] = AI_CONFIG_PROVIDER_OLLAMA;
+    for (int i = 1; i < count; i++) names[i] = ai_config_cloud_at((size_t)i - 1)->name;
+    for (int i = 0; i < count; i++) {
+        snprintf(choice_labels[i], sizeof(choice_labels[i]), " %s ", names[i]);
+        labels[i] = choice_labels[i];
+        if (strcmp(target->provider, names[i]) == 0) current = i;
+    }
+    sel = menu(" PROVIDER ", labels, count, current);
     if (sel < 0 || strcmp(target->provider, names[sel]) == 0) return false;
     return chat_settings_set(target, CHAT_SETTING_PROVIDER, names[sel]) == AI_CONFIG_OK;
 }
 
-/* DeepSeek only has these models, so they are picked, not typed. */
-static bool pick_deepseek_model(ai_config_t *target) {
-    static const char *const labels[] = {" " AI_CONFIG_DEEPSEEK_MODEL_DEFAULT " ", " " AI_CONFIG_DEEPSEEK_MODEL_REASONER " "};
-    static const char *const names[] = {AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, AI_CONFIG_DEEPSEEK_MODEL_REASONER};
-    int sel = menu(" MODEL ", labels, 2, strcmp(target->model, names[1]) == 0 ? 1 : 0);
-    if (sel < 0 || strcmp(target->model, names[sel]) == 0) return false;
-    return chat_settings_set(target, CHAT_SETTING_MODEL, names[sel]) == AI_CONFIG_OK;
+/* A cloud provider only has the models it lists, so they are picked, not typed. */
+static bool pick_cloud_model(ai_config_t *target) {
+    const ai_config_cloud_t *cloud = ai_config_cloud(target);
+    const char *labels[AI_CONFIG_CLOUD_MODELS_MAX];
+    int count = (int)ai_config_cloud_model_count(cloud), current = 0, sel;
+
+    for (int i = 0; i < count; i++) {
+        snprintf(choice_labels[i], sizeof(choice_labels[i]), " %s ", cloud->models[i]);
+        labels[i] = choice_labels[i];
+        if (strcmp(target->model, cloud->models[i]) == 0) current = i;
+    }
+    sel = menu(" MODEL ", labels, count, current);
+    if (sel < 0 || strcmp(target->model, cloud->models[sel]) == 0) return false;
+    return chat_settings_set(target, CHAT_SETTING_MODEL, cloud->models[sel]) == AI_CONFIG_OK;
 }
 
 static void settings_menu(void) {
@@ -446,7 +454,7 @@ static void settings_menu(void) {
         if (sel < 0) break;
         if (sel == CHAT_SETTING_COUNT) { config = draft; apply_config(); break; }
         if (sel == CHAT_SETTING_PROVIDER) pick_provider(&draft);
-        else if (sel == CHAT_SETTING_MODEL && ai_config_is_deepseek(&draft)) pick_deepseek_model(&draft);
+        else if (sel == CHAT_SETTING_MODEL && ai_config_cloud(&draft) != NULL) pick_cloud_model(&draft);
         else if (sel == CHAT_SETTING_SSID) ssid_menu(&draft);
         else edit_setting(&draft, (chat_setting_t)sel);
     }
@@ -618,7 +626,7 @@ static void chat_menu(void) {
         labels[4] = " New chat ";
         sel = menu(" CHAT ", labels, 5, sel);
         if (sel == 0) {
-            if (ai_config_is_deepseek(&config) ? pick_deepseek_model(&config) : edit_setting(&config, CHAT_SETTING_MODEL))
+            if (ai_config_cloud(&config) != NULL ? pick_cloud_model(&config) : edit_setting(&config, CHAT_SETTING_MODEL))
                 apply_config();
         }
         else if (sel == 1) { if (pick_provider(&config)) apply_config(); }
