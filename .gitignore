@@ -1196,3 +1196,7 @@
 /build/pico_flash_region.ld
 /build/
 /build-tests/
+
+# Locally generated Muse avatar renderer: compiled into local firmware only,
+# never committed (see tools/import_muse_avatar.py when it lands).
+avatars/

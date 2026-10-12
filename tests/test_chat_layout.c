@@ -77,6 +77,23 @@ static void check_edges(void) {
 
 /* Every byte is consumed exactly once and every line fits, for a long reply
  * at the transcript's real width. */
+/* Chat may reserve eight 8px cells only when the locally compiled avatar is
+ * both available and selected.  Keep this policy pure so the UI is testable
+ * without LCD hardware or the local renderer. */
+static void check_avatar_layout_policy(void) {
+    extern size_t chat_layout_transcript_columns(const char *provider, int avatar_available);
+    extern int chat_layout_avatar_refresh_due(unsigned long now_ms, unsigned long last_draw_ms);
+
+    CHECK(chat_layout_transcript_columns("ollama", 0) == 38u);
+    CHECK(chat_layout_transcript_columns("muse", 0) == 38u);
+    CHECK(chat_layout_transcript_columns("ollama", 1) == 38u);
+    CHECK(chat_layout_transcript_columns("muse", 1) == 30u);
+    CHECK(chat_layout_avatar_refresh_due(99ul, 0ul) == 0);
+    CHECK(chat_layout_avatar_refresh_due(100ul, 0ul) == 1);
+    CHECK(chat_layout_avatar_refresh_due(199ul, 100ul) == 0);
+    CHECK(chat_layout_avatar_refresh_due(200ul, 100ul) == 1);
+}
+
 static void check_progress(void) {
     static char text[4096];
     for (size_t i = 0u; i < sizeof(text) - 1u; i++) {
