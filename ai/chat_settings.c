@@ -65,13 +65,13 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
         return AI_CONFIG_INVALID_VALUE;
     }
     if (field == CHAT_SETTING_PROVIDER && strcmp(value, AI_CONFIG_PROVIDER_OLLAMA) != 0 &&
-        strcmp(value, AI_CONFIG_PROVIDER_DEEPSEEK) != 0) {
+        ai_config_cloud_find(value) == NULL) {
         return AI_CONFIG_INVALID_VALUE;
     }
     if (field == CHAT_SETTING_MODEL && length > OLLAMA_MODEL_MAX) {
         return AI_CONFIG_VALUE_TOO_LONG;
     }
-    /* Whatever the provider, the key is only ever sent as a bearer token. */
+    /* Whatever the provider, the key is only ever sent as a header value. */
     if (field == CHAT_SETTING_API_KEY && length > 0u && !ai_config_bearer_token_valid(value)) {
         return AI_CONFIG_INVALID_VALUE;
     }
@@ -84,7 +84,8 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
 static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *from) {
     switch (field) {
         case CHAT_SETTING_PROVIDER:
-            /* Also moves the host, port and model to the provider's own. */
+            /* Also moves the host, port and model to the provider's own, and
+             * drops a key that belonged to the cloud provider being left. */
             ai_config_set_provider(config, from->provider);
             break;
         case CHAT_SETTING_API_KEY:
@@ -193,8 +194,10 @@ ai_config_status_t chat_settings_set(ai_config_t *config, chat_setting_t field, 
         config->temperature = hundredths;
         return AI_CONFIG_OK;
     }
-    /* A lone "model=" line would be read as a DeepSeek default, not as empty. */
-    if (field == CHAT_SETTING_MODEL && ai_config_is_deepseek(config) && !ai_config_deepseek_model_known(value)) {
+    /* A lone "model=" line would be read as the provider's default, not as
+     * empty. */
+    if (field == CHAT_SETTING_MODEL && ai_config_cloud(config) != NULL &&
+        !ai_config_cloud_model_known(ai_config_cloud(config), value)) {
         return AI_CONFIG_INVALID_VALUE;
     }
 

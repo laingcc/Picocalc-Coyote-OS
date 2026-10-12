@@ -5,13 +5,21 @@
 #include <stddef.h>
 
 #include "ai/ai_config.h"
+#include "ai/cloud_provider.h"
 #include "ai/json_stream.h"
 #include "ai/ollama_provider.h"
+#include "ai/openai_compat.h"
 #include "ai/provider.h"
+#include "ai/sse_provider.h"
 
 /*
  * Direct DeepSeek provider: the OpenAI-compatible streaming chat completion
  * endpoint, POST https://api.deepseek.com/chat/completions.
+ *
+ * DeepSeek speaks the protocol OpenAI and Mistral also use, so the request
+ * builder and reply parser are the shared ones in ai/openai_compat, over the
+ * line reader in ai/sse_provider.  This header keeps the DeepSeek-named
+ * interface over them.
  *
  * deepseek_provider_build_request serialises model, messages, stream,
  * max_tokens and temperature into a fixed-capacity buffer that the transport
@@ -44,34 +52,19 @@
  *
  * Storage
  * -------
- * deepseek_provider_t embeds the request, line and content buffers.  Firmware
- * must declare it as a static or global object, never as a stack local.
- * Nothing here allocates.
+ * deepseek_provider_t is the shared sse_provider_t, which embeds the request,
+ * line and content buffers.  Firmware must declare it as a static or global
+ * object, never as a stack local.  Nothing here allocates.
  */
 
 #define DEEPSEEK_REQUEST_MAX OLLAMA_REQUEST_MAX
-#define DEEPSEEK_LINE_MAX 2048u
-#define DEEPSEEK_ERROR_MAX 96u
+#define DEEPSEEK_LINE_MAX OPENAI_COMPAT_LINE_MAX
+#define DEEPSEEK_ERROR_MAX SSE_ERROR_MAX
 
 /* Worst-case static storage for one deepseek_provider_t. */
-#define DEEPSEEK_PROVIDER_STORAGE_MAX_BYTES 8192u
+#define DEEPSEEK_PROVIDER_STORAGE_MAX_BYTES SSE_PROVIDER_STORAGE_MAX_BYTES
 
-typedef struct {
-    char body[DEEPSEEK_REQUEST_MAX + 1u];
-    size_t body_length;
-    bool built;
-    bool failed;
-    bool done;
-    char line[DEEPSEEK_LINE_MAX + 1u];
-    size_t line_length;
-    char payload[DEEPSEEK_LINE_MAX + 1u];
-    char error_text[DEEPSEEK_ERROR_MAX];
-    provider_event_callback_t callback;
-    void *callback_context;
-} deepseek_provider_t;
-
-_Static_assert(sizeof(deepseek_provider_t) <= DEEPSEEK_PROVIDER_STORAGE_MAX_BYTES,
-               "deepseek_provider_t exceeds its static RAM budget");
+typedef sse_provider_t deepseek_provider_t;
 
 void deepseek_provider_init(deepseek_provider_t *provider, provider_event_callback_t callback, void *context);
 
@@ -115,20 +108,17 @@ const char *deepseek_provider_content_type(void); /* "application/json" */
 
 /*
  * Whether a DeepSeek request may be started, decided before anything touches
- * the network.  clock_synced must be true only once SNTP has set the clock
- * since boot (time_service_trusted_now): certificate validity cannot be
- * judged without the real date, so a request made earlier is refused here
- * rather than attempted.
+ * the network: cloud_provider_start_check for a "deepseek" configuration.
+ * clock_synced must be true only once SNTP has set the clock since boot.
  */
-typedef enum {
-    DEEPSEEK_START_OK = 0,
-    DEEPSEEK_START_NOT_DEEPSEEK, /* the configuration names another provider */
-    DEEPSEEK_START_BAD_ENDPOINT, /* host or port is not DeepSeek's */
-    DEEPSEEK_START_BAD_MODEL,
-    DEEPSEEK_START_NO_KEY,
-    DEEPSEEK_START_BAD_KEY,      /* not a valid bearer token */
-    DEEPSEEK_START_CLOCK_NOT_SYNCED
-} deepseek_start_t;
+typedef cloud_start_t deepseek_start_t;
+#define DEEPSEEK_START_OK CLOUD_START_OK
+#define DEEPSEEK_START_NOT_DEEPSEEK CLOUD_START_NOT_CLOUD /* the configuration names another provider */
+#define DEEPSEEK_START_BAD_ENDPOINT CLOUD_START_BAD_ENDPOINT
+#define DEEPSEEK_START_BAD_MODEL CLOUD_START_BAD_MODEL
+#define DEEPSEEK_START_NO_KEY CLOUD_START_NO_KEY
+#define DEEPSEEK_START_BAD_KEY CLOUD_START_BAD_KEY
+#define DEEPSEEK_START_CLOCK_NOT_SYNCED CLOUD_START_CLOCK_NOT_SYNCED
 
 deepseek_start_t deepseek_provider_start_check(const ai_config_t *config, bool clock_synced);
 

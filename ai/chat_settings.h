@@ -19,10 +19,12 @@
  * reveal its length.
  *
  * The rules that tie fields to the provider are kept at every step.  Choosing
- * the "deepseek" provider sets its fixed host and port and the default model
- * (ai_config_set_provider); while it is chosen the host and port cannot be
- * changed, the model must be a known DeepSeek model, and the API key must be
- * a valid bearer token.
+ * a cloud provider ("deepseek", "openai", "mistral", "gemini", "claude") sets
+ * its fixed host and port and its default model (ai_config_set_provider);
+ * while it is chosen the host and port cannot be changed, the model must be
+ * one of that provider's models, and the API key must be a valid bearer
+ * token.  Leaving a cloud provider clears the API key, so one provider's key
+ * is never sent to another.
  */
 
 typedef enum {
@@ -39,7 +41,7 @@ typedef enum {
     CHAT_SETTING_SYSTEM_PROMPT,
     CHAT_SETTING_TEMPERATURE,
     CHAT_SETTING_UTC_OFFSET,
-    CHAT_SETTING_API_KEY, /* bearer_token: the DeepSeek API key */
+    CHAT_SETTING_API_KEY, /* bearer_token: the cloud provider's API key */
     CHAT_SETTING_COUNT
 } chat_setting_t;
 
@@ -57,7 +59,8 @@ int chat_settings_allows_empty(chat_setting_t field);
  * Validate value and, only if it is acceptable, store it in config.  Beyond
  * the ai_config rules this rejects control characters, leading or trailing
  * blanks (the parser would silently trim them), any provider but "ollama"
- * and "deepseek", a model name longer than the Ollama provider can send, and
+ * and the cloud providers, a model name longer than the Ollama provider can
+ * send, a model a cloud provider does not list, and
  * any value that would leave the configuration failing ai_config_validate.
  */
 ai_config_status_t chat_settings_set(ai_config_t *config, chat_setting_t field, const char *value);

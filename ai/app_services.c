@@ -39,7 +39,10 @@ static struct {
     wifi_scan_t scan;
     http_stream_t stream;
     ollama_provider_t provider;
-    deepseek_provider_t deepseek;
+    /* The cloud providers' request and reply parser.  One serves all of
+     * them: only one request is ever in flight. */
+    sse_provider_t cloud;
+    char cloud_path[CLOUD_PROVIDER_PATH_CAPACITY];
     provider_event_callback_t callback;
     void *callback_context;
 } services;
@@ -536,20 +539,20 @@ static int sink_finish(void *context) {
     return ollama_provider_finish((ollama_provider_t *)context);
 }
 
-/* DeepSeek answers an error status (a bad key, no balance, rate limiting)
- * with a body that is not an event stream.  It is dropped unread: the stream
- * reports the status itself. */
-static bool deepseek_status_ok(void) {
+/* A cloud provider answers an error status (a bad key, no balance, rate
+ * limiting) with a body that is not an event stream.  It is dropped unread:
+ * the stream reports the status itself, and the body is never shown. */
+static bool cloud_status_ok(void) {
     int status = http_stream_status_code(&services.stream);
     return status >= 200 && status <= 299;
 }
 
-static int deepseek_sink_feed(void *context, const char *data, size_t length) {
-    return deepseek_status_ok() ? deepseek_provider_feed((deepseek_provider_t *)context, data, length) : 0;
+static int cloud_sink_feed(void *context, const char *data, size_t length) {
+    return cloud_status_ok() ? sse_provider_feed((sse_provider_t *)context, data, length) : 0;
 }
 
-static int deepseek_sink_finish(void *context) {
-    return deepseek_status_ok() ? deepseek_provider_finish((deepseek_provider_t *)context) : 0;
+static int cloud_sink_finish(void *context) {
+    return cloud_status_ok() ? sse_provider_finish((sse_provider_t *)context) : 0;
 }
 
 /* One received segment can decode into several events.  Once the chat has been
@@ -571,7 +574,7 @@ void app_services_init(void) {
     wifi_scan_init(&services.scan, &scan_ops, NULL);
     http_stream_init(&services.stream, &stream_ops, NULL);
     ollama_provider_init(&services.provider, on_provider_event, NULL);
-    deepseek_provider_init(&services.deepseek, on_provider_event, NULL);
+    sse_provider_init(&services.cloud, on_provider_event, NULL);
     services.initialised = true;
 }
 
@@ -647,44 +650,35 @@ int app_services_wifi_scan_at(size_t i, char *ssid_buf, int *rssi) {
     return 0;
 }
 
-deepseek_start_t app_services_deepseek_ready(void) {
+cloud_start_t app_services_cloud_ready(void) {
     uint32_t now;
-    return deepseek_provider_start_check(&services.config, services.initialised && time_service_trusted_now(&now));
+    return cloud_provider_start_check(&services.config, services.initialised && time_service_trusted_now(&now));
+}
+
+deepseek_start_t app_services_deepseek_ready(void) {
+    return ai_config_is_deepseek(&services.config) ? app_services_cloud_ready() : DEEPSEEK_START_NOT_DEEPSEEK;
 }
 
 /*
- * The DeepSeek request: always TLS, always to the fixed DeepSeek endpoint
- * (never to the configured host, which start_check has in any case confirmed
- * is the same), with the API key as the bearer token.  It is refused before
- * any network activity unless the configuration is complete and the clock has
- * been set by SNTP since boot.
+ * A cloud request: always TLS, always to the provider's own fixed endpoint
+ * (never to the configured host, which the start check has in any case
+ * confirmed is the same), with the API key in that provider's header.
+ * cloud_provider_prepare puts it together; it is refused before any network
+ * activity unless the configuration is complete and the clock has been set by
+ * SNTP since boot.
  */
-static int chat_start_deepseek(const ollama_message_t *messages, size_t message_count) {
+static int chat_start_cloud(const ollama_message_t *messages, size_t message_count) {
     http_stream_request_t request;
+    uint32_t now;
 
-    if (app_services_deepseek_ready() != DEEPSEEK_START_OK) {
+    sse_provider_init(&services.cloud, on_provider_event, NULL);
+    if (cloud_provider_prepare(&services.config, time_service_trusted_now(&now), messages, message_count,
+                               &services.cloud, services.cloud_path, &request, NULL) != CLOUD_PREPARE_OK) {
         return -1;
     }
-    deepseek_provider_init(&services.deepseek, on_provider_event, NULL);
-    if (deepseek_provider_build_request(&services.deepseek, services.config.model, messages, message_count,
-                                        (int)services.config.max_predict,
-                                        services.config.system_prompt,
-                                        (int)services.config.temperature) != 0) {
-        return -1;
-    }
-
-    memset(&request, 0, sizeof(request));
-    request.host = AI_CONFIG_DEEPSEEK_HOST;
-    request.port = AI_CONFIG_DEEPSEEK_PORT;
-    request.tls = true;
-    request.bearer_token = services.config.bearer_token;
-    request.method = deepseek_provider_method();
-    request.path = deepseek_provider_path();
-    request.content_type = deepseek_provider_content_type();
-    request.body = deepseek_provider_request(&services.deepseek);
-    request.sink.feed = deepseek_sink_feed;
-    request.sink.finish = deepseek_sink_finish;
-    request.sink.context = &services.deepseek;
+    request.sink.feed = cloud_sink_feed;
+    request.sink.finish = cloud_sink_finish;
+    request.sink.context = &services.cloud;
     request.connect_timeout_ms = services.config.connect_timeout_ms;
     request.idle_timeout_ms = services.config.idle_timeout_ms;
     request.request_timeout_ms = services.config.request_timeout_ms;
@@ -704,8 +698,8 @@ int app_services_chat_start(const ollama_message_t *messages,
 
     services.callback = callback;
     services.callback_context = context;
-    if (ai_config_is_deepseek(&services.config)) {
-        return chat_start_deepseek(messages, message_count);
+    if (ai_config_cloud(&services.config) != NULL) {
+        return chat_start_cloud(messages, message_count);
     }
     if (strcmp(services.config.provider, AI_CONFIG_PROVIDER_OLLAMA) != 0) {
         return -1;

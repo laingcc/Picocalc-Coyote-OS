@@ -483,7 +483,7 @@ static void check_set_provider(void) {
     CHECK(config.port == 11434u);
     CHECK_STR_EQ(config.model, "");
 
-    CHECK(ai_config_set_provider(&config, "openai") == AI_CONFIG_INVALID_VALUE);
+    CHECK(ai_config_set_provider(&config, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK(ai_config_set_provider(&config, "") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.provider, "ollama");
     CHECK(ai_config_set_provider(NULL, "ollama") == AI_CONFIG_INVALID_ARGUMENT);

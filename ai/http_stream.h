@@ -28,10 +28,13 @@
  * reports http_stream_on_connected only after the handshake has completed and
  * the peer's certificate and host name have been verified.
  *
- * A bearer token is sent as "Authorization: Bearer <token>" and only on a
- * TLS request; http_stream_start refuses one on a plain request.  The request
- * head, which then holds the token, is wiped as soon as it has been handed to
- * the stack or the request ends.
+ * A credential is either a bearer token, sent as "Authorization: Bearer
+ * <token>", or an API key sent in a header of the provider's choosing (such as
+ * "x-api-key: <key>").  Either is sent only on a TLS request:
+ * http_stream_start refuses a credential on a plain request, and refuses one
+ * that is not safe to put in a header.  The request head, which then holds
+ * the credential, is wiped as soon as it has been handed to the stack or the
+ * request ends.
  *
  * One request is in flight at a time:
  *
@@ -71,11 +74,24 @@
  * must declare it as a static or global object, never as a stack local.
  */
 
-#define HTTP_STREAM_REQUEST_HEAD_MAX 512u
+/*
+ * Room for the longest head any provider sends.  That is Gemini's, with a key
+ * of the greatest length the configuration can hold (256 bytes):
+ *
+ *   request line, longest model path             80
+ *   Host                                         41
+ *   x-goog-api-key + 256-byte key               274
+ *   Content-Type, Content-Length, Connection     73
+ *   blank line                                    2
+ *
+ * 470 bytes; Claude's, with its version header, is 395.  Rounded up with room
+ * to spare, and checked by the tests with a longest key for every provider.
+ */
+#define HTTP_STREAM_REQUEST_HEAD_MAX 768u
 #define HTTP_STREAM_SEND_WINDOW 256u
 
 /* Worst-case static storage for one http_stream_t. */
-#define HTTP_STREAM_STORAGE_MAX_BYTES 3584u
+#define HTTP_STREAM_STORAGE_MAX_BYTES 3840u
 
 /* Result codes for the dns_resolve / tcp_connect / tcp_write adapters. */
 #define HTTP_STREAM_IO_ERROR (-1)
@@ -178,8 +194,20 @@ typedef struct {
  * the stream leaves its active states.  A timeout of 0 disables that timeout.
  *
  * bearer_token may be NULL for none.  When given it must be a non-empty
- * RFC 6750 b64token and tls must be set.  With tls set and port 443 the Host
- * header carries no port.
+ * RFC 6750 b64token and tls must be set.
+ *
+ * api_key, with api_key_header, is the other way to carry a credential: it is
+ * sent as "<api_key_header>: <api_key>".  The key is held to the same rules
+ * as a bearer token, the header name must be an HTTP token (letters, digits
+ * and "-"), and the two must be given together.  A request carries at most
+ * one credential: bearer_token and api_key cannot both be set.
+ *
+ * extra_header may be NULL, or one more complete header line without its
+ * line ending, such as "anthropic-version: 2023-06-01".  It is a
+ * provider's header, so like a credential it is only accepted with tls set;
+ * it must never carry a secret, since it is not checked as one.
+ *
+ * With tls set and port 443 the Host header carries no port.
  */
 typedef struct {
     const char *host;
@@ -188,6 +216,9 @@ typedef struct {
     const char *path;
     const char *content_type;
     const char *bearer_token;
+    const char *api_key_header;
+    const char *api_key;
+    const char *extra_header;
     bool tls;
     provider_request_t body;
     http_stream_sink_t sink;
@@ -236,8 +267,8 @@ void http_stream_init(http_stream_t *stream, const http_stream_ops_t *ops, void 
  * Start a request.  Returns 0 once resolution has begun.  Returns -1 and
  * leaves the stream untouched if the arguments are invalid, the request head
  * does not fit, a request is already active, a TLS request is made without a
- * tls_connect adapter, or a bearer token is malformed or offered without TLS; returns -1 with the stream in
- * ERROR if the link is down or the resolver failed immediately.
+ * tls_connect adapter, or a credential is malformed, offered without TLS or
+ * given twice; returns -1 with the stream in ERROR if the link is down or the resolver failed immediately.
  */
 int http_stream_start(http_stream_t *stream, const http_stream_request_t *request);
 

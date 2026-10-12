@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 /* Number of root certificates in tls_trust_pem. */
-#define TLS_TRUST_ROOT_COUNT 5u
+#define TLS_TRUST_ROOT_COUNT 7u
 
 /* The PEM root certificates TLS connections are verified against, and their
  * length including the trailing NUL.  See tls_trust.c. */

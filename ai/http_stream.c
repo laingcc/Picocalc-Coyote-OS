@@ -171,6 +171,43 @@ static bool is_header_safe(const char *text, bool allow_space) {
     return true;
 }
 
+/* An HTTP header name made only of letters, digits and "-". */
+static bool is_header_name(const char *text) {
+    const char *p = text;
+    if (text == NULL || *p == '\0') {
+        return false;
+    }
+    for (; *p != '\0'; p++) {
+        if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+ * Whether the request's credential, if it has one, may be sent: over TLS
+ * only, in a form that cannot break out of its header, and only one of them.
+ */
+static bool credential_valid(const http_stream_request_t *request) {
+    if ((request->api_key == NULL) != (request->api_key_header == NULL)) {
+        return false;
+    }
+    if (request->bearer_token != NULL && request->api_key != NULL) {
+        return false;
+    }
+    if (request->bearer_token != NULL &&
+        (!request->tls || !ai_config_bearer_token_valid(request->bearer_token))) {
+        return false;
+    }
+    if (request->api_key != NULL &&
+        (!request->tls || !ai_config_bearer_token_valid(request->api_key) ||
+         !is_header_name(request->api_key_header))) {
+        return false;
+    }
+    return true;
+}
+
 static bool ops_valid(const http_stream_ops_t *ops) {
     return ops != NULL && ops->clock_ms != NULL && ops->dns_resolve != NULL && ops->tcp_connect != NULL &&
            ops->tcp_write != NULL && ops->tcp_close != NULL && ops->tcp_abort != NULL;
@@ -189,6 +226,9 @@ void http_stream_init(http_stream_t *stream, const http_stream_ops_t *ops, void 
 
 int http_stream_start(http_stream_t *stream, const http_stream_request_t *request) {
     char port_text[8];
+    const char *credential_name = "";
+    const char *credential_separator = "";
+    const char *credential = "";
     size_t body_length;
     int head_length;
     int resolved;
@@ -206,8 +246,21 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
     if (request->tls && stream->ops->tls_connect == NULL) {
         return -1;
     }
-    if (request->bearer_token != NULL && (!request->tls || !ai_config_bearer_token_valid(request->bearer_token))) {
+    if (!credential_valid(request)) {
         return -1;
+    }
+    if (request->extra_header != NULL &&
+        (!request->tls || !is_header_safe(request->extra_header, true) ||
+         strchr(request->extra_header, ':') == NULL)) {
+        return -1;
+    }
+    if (request->bearer_token != NULL) {
+        credential_name = "Authorization: Bearer ";
+        credential = request->bearer_token;
+    } else if (request->api_key != NULL) {
+        credential_name = request->api_key_header;
+        credential_separator = ": ";
+        credential = request->api_key;
     }
 
     port_text[0] = '\0';
@@ -218,15 +271,16 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
     head_length = snprintf(stream->head, sizeof(stream->head),
                            "%s %s HTTP/1.1\r\n"
                            "Host: %s%s\r\n"
-                           "%s%s%s"
+                           "%s%s%s%s"
+                           "%s%s"
                            "Content-Type: %s\r\n"
                            "Content-Length: %lu\r\n"
                            "Connection: close\r\n"
                            "\r\n",
                            request->method, request->path, request->host, port_text,
-                           request->bearer_token != NULL ? "Authorization: Bearer " : "",
-                           request->bearer_token != NULL ? request->bearer_token : "",
-                           request->bearer_token != NULL ? "\r\n" : "",
+                           credential_name, credential_separator, credential, credential[0] != '\0' ? "\r\n" : "",
+                           request->extra_header != NULL ? request->extra_header : "",
+                           request->extra_header != NULL ? "\r\n" : "",
                            request->content_type, (unsigned long)body_length);
     if (head_length <= 0 || (size_t)head_length >= sizeof(stream->head)) {
         scrub_head(stream);

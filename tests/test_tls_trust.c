@@ -99,7 +99,8 @@ void test_tls_trust(void) {
     /* Nothing but certificates, and all of them. */
     CHECK(*cursor == '\0');
     CHECK(roots == TLS_TRUST_ROOT_COUNT);
-    CHECK(roots == 5u);
+    /* Keep this independent check aligned with the explicit root list. */
+    CHECK(roots == 7u);
     /* The root api.deepseek.com's chain ends in today. */
     CHECK(amazon_root_1);
 }

@@ -48,9 +48,77 @@ ai_config_status_t ai_config_init(ai_config_t *config) {
     return AI_CONFIG_OK;
 }
 
+/*
+ * The cloud providers.  Model names are the ones each provider documents for
+ * its chat API; "-latest" names are that provider's own aliases.
+ */
+static const ai_config_cloud_t clouds[] = {
+    {AI_CONFIG_PROVIDER_DEEPSEEK, AI_CONFIG_DEEPSEEK_HOST,
+     {AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, AI_CONFIG_DEEPSEEK_MODEL_REASONER, NULL}},
+    {AI_CONFIG_PROVIDER_OPENAI, AI_CONFIG_OPENAI_HOST, {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"}},
+    {AI_CONFIG_PROVIDER_MISTRAL, AI_CONFIG_MISTRAL_HOST,
+     {"mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"}},
+    {AI_CONFIG_PROVIDER_GEMINI, AI_CONFIG_GEMINI_HOST,
+     {"gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"}},
+    {AI_CONFIG_PROVIDER_CLAUDE, AI_CONFIG_CLAUDE_HOST,
+     {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}},
+};
+
+_Static_assert(sizeof(clouds) / sizeof(clouds[0]) == AI_CONFIG_CLOUD_MAX, "AI_CONFIG_CLOUD_MAX is out of step");
+
+size_t ai_config_cloud_count(void) {
+    return sizeof(clouds) / sizeof(clouds[0]);
+}
+
+const ai_config_cloud_t *ai_config_cloud_at(size_t index) {
+    return index < ai_config_cloud_count() ? &clouds[index] : NULL;
+}
+
+const ai_config_cloud_t *ai_config_cloud_find(const char *provider) {
+    size_t i;
+
+    if (provider == NULL) {
+        return NULL;
+    }
+    for (i = 0u; i < ai_config_cloud_count(); i++) {
+        if (strcmp(provider, clouds[i].name) == 0) {
+            return &clouds[i];
+        }
+    }
+    return NULL;
+}
+
+const ai_config_cloud_t *ai_config_cloud(const ai_config_t *config) {
+    return config != NULL ? ai_config_cloud_find(config->provider) : NULL;
+}
+
+size_t ai_config_cloud_model_count(const ai_config_cloud_t *cloud) {
+    size_t count = 0u;
+
+    while (cloud != NULL && count < AI_CONFIG_CLOUD_MODELS_MAX && cloud->models[count] != NULL) {
+        count++;
+    }
+    return count;
+}
+
+int ai_config_cloud_model_known(const ai_config_cloud_t *cloud, const char *model) {
+    size_t count = ai_config_cloud_model_count(cloud);
+    size_t i;
+
+    if (model == NULL) {
+        return 0;
+    }
+    for (i = 0u; i < count; i++) {
+        if (strcmp(model, cloud->models[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int known_provider(const char *provider) {
     return strcmp(provider, AI_CONFIG_PROVIDER_OLLAMA) == 0 || strcmp(provider, AI_CONFIG_PROVIDER_MUSE) == 0 ||
-           strcmp(provider, AI_CONFIG_PROVIDER_DEEPSEEK) == 0;
+           ai_config_cloud_find(provider) != NULL;
 }
 
 int ai_config_is_deepseek(const ai_config_t *config) {
@@ -58,8 +126,7 @@ int ai_config_is_deepseek(const ai_config_t *config) {
 }
 
 int ai_config_deepseek_model_known(const char *model) {
-    return model != NULL && (strcmp(model, AI_CONFIG_DEEPSEEK_MODEL_DEFAULT) == 0 ||
-                             strcmp(model, AI_CONFIG_DEEPSEEK_MODEL_REASONER) == 0);
+    return ai_config_cloud_model_known(ai_config_cloud_find(AI_CONFIG_PROVIDER_DEEPSEEK), model);
 }
 
 int ai_config_bearer_token_valid(const char *token) {
@@ -88,22 +155,33 @@ int ai_config_bearer_token_valid(const char *token) {
 
 /* The field breaking a cross-field rule, or KEY_UNKNOWN if none does. */
 static int invalid_provider_field(const ai_config_t *config) {
-    if (!ai_config_is_deepseek(config)) {
+    const ai_config_cloud_t *cloud = ai_config_cloud(config);
+
+    if (cloud == NULL) {
         return KEY_UNKNOWN;
     }
-    if (strcmp(config->host, AI_CONFIG_DEEPSEEK_HOST) != 0) {
+    if (strcmp(config->host, cloud->host) != 0) {
         return KEY_HOST;
     }
-    if (config->port != AI_CONFIG_DEEPSEEK_PORT) {
+    if (config->port != AI_CONFIG_CLOUD_PORT) {
         return KEY_PORT;
     }
-    if (!ai_config_deepseek_model_known(config->model)) {
+    if (!ai_config_cloud_model_known(cloud, config->model)) {
         return KEY_MODEL;
     }
     if (config->bearer_token[0] != '\0' && !ai_config_bearer_token_valid(config->bearer_token)) {
         return KEY_BEARER_TOKEN;
     }
     return KEY_UNKNOWN;
+}
+
+/* Point config at a cloud provider's own endpoint and default model. */
+static void use_cloud_endpoint(ai_config_t *config, const ai_config_cloud_t *cloud) {
+    memset(config->host, 0, sizeof(config->host));
+    memcpy(config->host, cloud->host, strlen(cloud->host) + 1u);
+    config->port = AI_CONFIG_CLOUD_PORT;
+    memset(config->model, 0, sizeof(config->model));
+    memcpy(config->model, cloud->models[0], strlen(cloud->models[0]) + 1u);
 }
 
 ai_config_status_t ai_config_validate(const ai_config_t *config) {
@@ -123,16 +201,15 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     if (strcmp(config->provider, provider) == 0) {
         return AI_CONFIG_OK;
     }
-    if (strcmp(provider, AI_CONFIG_PROVIDER_DEEPSEEK) == 0) {
-        memset(config->host, 0, sizeof(config->host));
-        memcpy(config->host, AI_CONFIG_DEEPSEEK_HOST, sizeof(AI_CONFIG_DEEPSEEK_HOST));
-        config->port = AI_CONFIG_DEEPSEEK_PORT;
-        memset(config->model, 0, sizeof(config->model));
-        memcpy(config->model, AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, sizeof(AI_CONFIG_DEEPSEEK_MODEL_DEFAULT));
-    } else if (ai_config_is_deepseek(config)) {
+    if (ai_config_cloud(config) != NULL) {
+        /* Nothing of the provider being left goes to the next one. */
         memset(config->host, 0, sizeof(config->host));
         config->port = AI_CONFIG_OLLAMA_PORT;
         memset(config->model, 0, sizeof(config->model));
+        memset(config->bearer_token, 0, sizeof(config->bearer_token));
+    }
+    if (ai_config_cloud_find(provider) != NULL) {
+        use_cloud_endpoint(config, ai_config_cloud_find(provider));
     }
     memset(config->provider, 0, sizeof(config->provider));
     memcpy(config->provider, provider, strlen(provider) + 1u);
@@ -418,20 +495,22 @@ static int seen(const ai_config_parser_t *parser, int id) {
     return (parser->seen_keys & (uint16_t)(1u << (unsigned)id)) != 0u;
 }
 
-/* Fill in what a "deepseek" file left out, then apply the cross-field rules. */
+/* Fill in what a cloud provider's file left out, then apply the cross-field
+ * rules. */
 static ai_config_status_t finish_provider(ai_config_parser_t *parser) {
     ai_config_t *config = parser->config;
+    const ai_config_cloud_t *cloud = ai_config_cloud(config);
     int id;
 
-    if (ai_config_is_deepseek(config)) {
+    if (cloud != NULL) {
         if (!seen(parser, KEY_HOST)) {
-            memcpy(config->host, AI_CONFIG_DEEPSEEK_HOST, sizeof(AI_CONFIG_DEEPSEEK_HOST));
+            memcpy(config->host, cloud->host, strlen(cloud->host) + 1u);
         }
         if (!seen(parser, KEY_PORT)) {
-            config->port = AI_CONFIG_DEEPSEEK_PORT;
+            config->port = AI_CONFIG_CLOUD_PORT;
         }
         if (config->model[0] == '\0') {
-            memcpy(config->model, AI_CONFIG_DEEPSEEK_MODEL_DEFAULT, sizeof(AI_CONFIG_DEEPSEEK_MODEL_DEFAULT));
+            memcpy(config->model, cloud->models[0], strlen(cloud->models[0]) + 1u);
         }
     }
     id = invalid_provider_field(config);
