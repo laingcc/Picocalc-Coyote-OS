@@ -30,12 +30,16 @@ the local network, or directly from [DeepSeek](https://api-docs.deepseek.com) ov
   `HH:MM?`, because it is behind by however long the unit was off.
 - **SD persistence** – chat and Wi-Fi settings are saved to `/coyote/ai.ini` and reloaded at
   boot. A card that fails to mount is left alone, never formatted.
+- **SD card over USB** – Home, **USB disk** hands the card to a computer, which mounts it as a
+  drive named *PicoCalc SD card*: files can be dropped on it and `/coyote/ai.ini` edited without
+  taking the card out. Eject it on the computer first, then press Esc. See
+  [SD card over USB](#sd-card-over-usb).
 
 ### Keys
 
 | Key | Calculator | Text editor | Chat |
 | --- | --- | --- | --- |
-| Home (Shift+Tab) | Mode menu: Text / Calculator / Chat | same | same |
+| Home (Shift+Tab) | Mode menu: Text / Calculator / Chat / Connection settings / USB disk | same | same |
 | F1–F4 | Switch tab | F1: open file | – |
 | F5 | Settings: beeps, reboot to bootloader | Save as | Chat menu |
 | F6 | Graph menu (tab 4) | New file | – |
@@ -94,6 +98,31 @@ the button.
 
 Debug output goes to UART0 at 115200 baud (USB stdio is disabled), which the PicoCalc exposes on
 its USB Type-C port.
+
+## SD card over USB
+
+Home, **USB disk** hands the card to a computer, which mounts it as an ordinary FAT drive named
+*PicoCalc SD card*: the same card the firmware keeps `/coyote` on, without taking it out of the
+case.
+
+1. Plug the **Pico's own USB port** into the computer. The PicoCalc's USB Type-C is the charging
+   port and the STM32's serial console, so it cannot carry the disk.
+2. On the PicoCalc, press Home and choose **USB disk**. The screen says what the computer is
+   seeing; it stays up for as long as the mode runs.
+3. On the computer, do what you came for - drop a file on the card, edit `/coyote/ai.ini`, take a
+   copy of what is on it.
+4. **Eject the drive on the computer**, then press Esc on the PicoCalc.
+
+While the mode is up the card belongs to the computer, so nothing else can use it: the chat, the
+editor and the settings all wait, and a reply that is still streaming has to finish or be
+cancelled before the card can be handed over. Coming back, the card is brought up again from
+scratch - it may have been swapped while it was gone - and the settings are read from it again if
+the computer wrote anything, so an edited `ai.ini` takes effect without a reboot.
+
+**Power.** The Pico's USB port is wired into the PicoCalc's power path: plugging it into a
+computer feeds the cells past the mainboard's charging circuit, which is a known quirk of the
+PicoCalc and happens whether or not the USB disk mode is running. If that matters for how you
+use it, power the Pico through a cable with the 5 V wire cut, or take the cells out.
 
 ## First-run chat setup
 
@@ -208,6 +237,8 @@ unless told otherwise. The firmware does not use it yet: it only talks to Ollama
   address is the reliable value for Host.
 - Requests to an Ollama host are plaintext HTTP. Use it only on a LAN you trust.
 - Ollama and DeepSeek are the only providers in the firmware.
+- The USB disk mode is an all-or-nothing stop: while it runs, nothing else on the device can use
+  the card, and the chat waits until it ends.
 - The clock is UTC only and the NTP server is fixed. With no battery-backed RTC, a time restored
   after a reboot is stale until Wi-Fi comes back.
 - The Wi-Fi password and the DeepSeek API key are stored unencrypted in `/coyote/ai.ini` on the
