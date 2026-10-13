@@ -19,7 +19,8 @@
 #define MENU_X ((LCD_WIDTH - MENU_W * 8) / 2)
 #define MENU_Y ((LCD_HEIGHT - MENU_H * 12) / 2)
 #define MODE_MENU_W 24
-#define MODE_MENU_H 7
+/* The rows of the mode menu: a title, a blank, one row per item, and the box. */
+#define MODE_MENU_H 8
 #define MODE_MENU_X ((LCD_WIDTH - MODE_MENU_W * 8) / 2)
 #define MODE_MENU_Y ((LCD_HEIGHT - MODE_MENU_H * 12) / 2)
 
@@ -34,6 +35,9 @@ int active_tab = 0;
 TabContext tab_contexts[MAX_TABS];
 static app_mode_t current_mode = MODE_CALCULATOR;
 static ui_idle_hook_t idle_hook;
+/* Set by the mode menu, cleared when main.c takes it: the USB disk mode needs
+ * the card to itself, which only main.c can arrange. */
+static bool usb_disk_request;
 
 void ui_set_idle_hook(ui_idle_hook_t hook) { idle_hook = hook; }
 static void ui_idle(void) { if (idle_hook) idle_hook(); }
@@ -54,6 +58,12 @@ static void draw_menu_frame(int x, int y, int w, int h, const char* title) {
     int tx = x + (w*8 - tlen*8) / 2;
     for (int i = 0; i < tlen; i++)
         lcd_print_char_at(WHITE, BLACK, title[i], 0, tx + i*8, y);
+}
+
+/* One line of text, at a column and a row of the character grid. */
+static void usb_disk_line(int x, int row, const char* text) {
+    for (int i = 0; text[i] != '\0'; i++)
+        lcd_print_char_at(WHITE, BLACK, text[i], 0, x * 8 + i * 8, row * 12);
 }
 
 static void draw_menu_opt(int x, int y, int w, int row, const char* text, bool sel) {
@@ -284,15 +294,57 @@ static void redraw_current_mode(void) {
 }
 
 void ui_show_mode_menu() {
-    MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}, {" Connection settings "}};
-    int sel = run_menu(MODE_MENU_X, MODE_MENU_Y, MODE_MENU_W, MODE_MENU_H, " MODE ", items, 4,
+    MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}, {" Connection settings "}, {" USB disk "}};
+    int sel = run_menu(MODE_MENU_X, MODE_MENU_Y, MODE_MENU_W, MODE_MENU_H, " MODE ", items, 5,
                        current_mode == MODE_TEXT ? 0 : current_mode == MODE_CHAT ? 2 : 1);
     if (sel == 0) ui_set_current_mode(MODE_TEXT);
     else if (sel == 1) ui_set_current_mode(MODE_CALCULATOR);
     else if (sel == 2) ui_set_current_mode(MODE_CHAT);
     /* The settings draw over the whole screen; repaint the mode they covered. */
     else if (sel == 3) { chat_mode_show_connection_settings(); ui_set_current_mode(current_mode); }
+    /* Handing the card to a computer takes the screen; main.c runs it. */
+    else if (sel == 4) { usb_disk_request = true; redraw_current_mode(); }
     else redraw_current_mode();
+}
+
+bool ui_take_usb_disk_request() {
+    bool requested = usb_disk_request;
+    usb_disk_request = false;
+    return requested;
+}
+
+/* The card belongs to the computer while this is up, so the screen says what
+ * to do about it rather than pretending the rest of the device is usable. */
+void ui_usb_disk_show(bool host_attached, uint32_t blocks) {
+    static bool drawn = false, shown_attached = false;
+    static uint32_t shown_blocks = 0u;
+    char text[32];
+
+    if (drawn && shown_attached == host_attached && shown_blocks == blocks) return;
+    drawn = true;
+    shown_attached = host_attached;
+    shown_blocks = blocks;
+
+    draw_menu_frame(1, 1, 38, 12, " USB DISK ");
+    usb_disk_line(1, 2, " The card is the computer's now.");
+    usb_disk_line(1, 3, " It shows up there as a disk.");
+    usb_disk_line(1, 5, " Eject it on the computer first,");
+    usb_disk_line(1, 6, " then press Esc to hand it back.");
+
+    if (blocks == 0u) snprintf(text, sizeof(text), " Card:  none");
+    else if (blocks / 2048u >= 1024u)
+        snprintf(text, sizeof(text), " Card:  %lu.%lu GB", (unsigned long)(blocks / 2048u / 1024u),
+                 (unsigned long)((blocks / 2048u % 1024u) / 102u));
+    else snprintf(text, sizeof(text), " Card:  %lu MB", (unsigned long)(blocks / 2048u));
+    usb_disk_line(1, 8, text);
+
+    usb_disk_line(1, 9, host_attached ? " USB:   connected" : " USB:   waiting for a computer");
+
+    usb_disk_line(1, 10, " Use the Pico's own USB port.");
+}
+
+void ui_usb_disk_done() {
+    redraw_current_mode();
 }
 
 void ui_show_notice(const char* text) {

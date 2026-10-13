@@ -2,6 +2,7 @@
 #define COYOTE_UI_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #define MAX_TABS 4
 #define MAX_HISTORY 10
@@ -50,6 +51,15 @@ void ui_show_mode_menu();
 void ui_show_graph_menu();
 /* Show a one-line notice (up to 20 characters) briefly, then redraw the mode. */
 void ui_show_notice(const char* text);
+
+/*
+ * The USB disk mode.  The mode menu asks for it and main.c runs it, because
+ * the card has to be unmounted before it can be handed to a computer: the
+ * screen below stays up for as long as the mode lasts.
+ */
+bool ui_take_usb_disk_request();
+void ui_usb_disk_show(bool host_attached, uint32_t blocks);
+void ui_usb_disk_done();
 bool ui_show_file_menu(const char* directory, char* out_filename, int max_len);
 bool ui_show_save_prompt(char* out_filename, int max_len);
 /* Modal text prompt; false if cancelled, leaving out untouched. */

@@ -640,6 +640,18 @@ static void chat_menu(void) {
 
 /* ---- Entry points -------------------------------------------------------- */
 
+void chat_mode_reload_settings(void) {
+    if (config_store_load(&config, CONFIG_DIR) != AI_CONFIG_OK) {
+        set_note("ai.ini unreadable");
+        return;
+    }
+    /* The card may have been edited while it was the computer's: the services
+     * take the settings from the file as they would at boot. */
+    if (config.ssid[0]) app_services_configure(&config);
+    chat_request_measure_init(&measure, &config);
+    set_note("settings reloaded");
+}
+
 void chat_mode_init(void) {
     ai_config_status_t loaded;
 

@@ -534,6 +534,28 @@ static void check_deepseek_setup(void) {
     CHECK(!shows(screen, "sk-"));
 }
 
+static void check_usb_disk_row(void) {
+    script_begin();
+    ui_set_current_mode(MODE_CALCULATOR);
+    CHECK(!ui_take_usb_disk_request());
+
+    press(SNAP);
+    press_times(KEY_DOWN, 3); press(KEY_ENTER); /* Calculator -> USB disk */
+    ui_show_mode_menu();
+
+    CHECK(script_consumed());
+    CHECK(snapshot_count == 1);
+    CHECK(shows(snapshots[0], " MODE "));
+    CHECK(shows(snapshots[0], " Text "));
+    CHECK(shows(snapshots[0], " USB disk "));
+
+    /* Choosing it asks for the card rather than switching modes: only main.c
+     * can unmount the filesystem and hand it over. */
+    CHECK(ui_take_usb_disk_request());
+    CHECK(!ui_take_usb_disk_request());
+    CHECK(ui_get_current_mode() == MODE_CALCULATOR);
+}
+
 void test_mode_menu(void) {
     ui_init();
     chat_mode_init();
@@ -548,4 +570,5 @@ void test_mode_menu(void) {
     check_chat_menu_is_unchanged();
     check_apply_cancels_a_streaming_reply();
     check_deepseek_setup();
+    check_usb_disk_row();
 }

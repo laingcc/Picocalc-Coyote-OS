@@ -17,6 +17,13 @@
 
 /* Call once at startup, after app_services_init. */
 void chat_mode_init(void);
+
+/*
+ * Read the settings again, keeping the conversation: for when the card they
+ * live on has been somewhere the firmware could not see, as in the USB disk
+ * mode.  A file that cannot be read leaves the settings in force alone.
+ */
+void chat_mode_reload_settings(void);
 void chat_mode_redraw(void);
 /* c is the key read this iteration, or a negative value for none. */
 void chat_mode_handle_input(int c);
