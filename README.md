@@ -151,9 +151,14 @@ you type it, appears as `********` in the menus afterwards, and is stored in pla
 `/coyote/ai.ini` as `bearer_token=…` (you can put it there from a computer instead of typing it).
 Any value must look like a bearer token: letters, digits and `-._~+/`, with `=` padding last.
 
-The key is sent as an `Authorization: Bearer` header. For a cloud provider it never leaves TLS and
-is dropped as soon as you choose a different provider. For `ollama` and `muse` - a host on your
-own LAN, which speaks plain HTTP - it travels in clear, so use those only on a network you trust.
+A key is remembered per provider. Choosing another provider puts the key being used away under the
+provider it was typed for and brings back that provider's own key, so switching between, say,
+DeepSeek and the Muse bridge does not mean typing either one again. Remembered keys are written
+under their provider's name, e.g. `key_muse=…`; clearing the key clears the remembered one too.
+
+The key is sent as an `Authorization: Bearer` header. For a cloud provider it never leaves TLS. For
+`ollama` and `muse` - a host on your own LAN, which speaks plain HTTP - it travels in clear, so use
+those only on a network you trust.
 
 ## DeepSeek
 
@@ -259,8 +264,9 @@ for this device can be compiled into the firmware.
   the card, and the chat waits until it ends.
 - The clock is UTC only and the NTP server is fixed. With no battery-backed RTC, a time restored
   after a reboot is stale until Wi-Fi comes back.
-- The Wi-Fi password and the API key (or bridge token) are stored unencrypted in
-  `/coyote/ai.ini` on the SD card.
+- The Wi-Fi password and every key the device has been given (the API key - or bridge token - of
+  each provider, under `key_<provider>=`) are stored unencrypted in `/coyote/ai.ini` on the SD
+  card.
 
 ## License
 

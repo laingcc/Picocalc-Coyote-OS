@@ -39,11 +39,22 @@ static const char *read_file(const char *name) {
     return file_text;
 }
 
+/* The firmware keeps the key of the provider in force in that provider's slot
+ * as well; a fixture has to do the same, or the file would not round-trip. */
+static void remember(ai_config_t *config) {
+    int slot = ai_config_key_slot(config->provider);
+    if (slot >= 0) {
+        strcpy(config->provider_keys[slot], config->bearer_token);
+    }
+}
+
 static void fill(ai_config_t *config) {
     ai_config_init(config);
     strcpy(config->ssid, "Lab WiFi");
     strcpy(config->password, SECRET_PASSWORD);
-    strcpy(config->provider, "muse");
+    /* Through the setter, as the firmware does: it clears the whole field, so
+     * none of the default provider is left behind. */
+    ai_config_set_provider(config, "muse");
     strcpy(config->host, "192.0.2.7");
     config->port = 8080u;
     strcpy(config->model, "small:model");
@@ -53,6 +64,7 @@ static void fill(ai_config_t *config) {
     config->idle_timeout_ms = 7000u;
     config->max_predict = 1024u;
     config->utc_offset_minutes = -210;
+    remember(config);
 }
 
 static void check_filled(const ai_config_t *config) {
@@ -137,6 +149,33 @@ static void check_round_trip(void) {
     CHECK(!exists(CONFIG_STORE_TEMP_NAME));
 }
 
+static void check_remembered_keys_round_trip(void) {
+    ai_config_t saved;
+    ai_config_t loaded;
+    int slot;
+
+    clean();
+    fill(&saved);
+    /* A key given to another provider is remembered beside the one in force. */
+    slot = ai_config_key_slot("deepseek");
+    CHECK(slot == 2);
+    strcpy(saved.provider_keys[slot], "fedcba9876543210");
+    CHECK(config_store_save(&saved, test_dir) == AI_CONFIG_OK);
+    CHECK(strstr(read_file(CONFIG_STORE_FILE_NAME), "key_deepseek=fedcba9876543210\n") != NULL);
+    CHECK(strstr(file_text, "bearer_token=" SECRET_TOKEN "\n") != NULL);
+
+    memset(&loaded, 0x5a, sizeof(loaded));
+    CHECK(config_store_load(&loaded, test_dir) == AI_CONFIG_OK);
+    CHECK_STR_EQ(loaded.bearer_token, SECRET_TOKEN);
+    CHECK_STR_EQ(loaded.provider_keys[slot], "fedcba9876543210");
+
+    /* Switching provider on what was loaded brings the remembered key back. */
+    CHECK(ai_config_set_provider(&loaded, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(loaded.bearer_token, "fedcba9876543210");
+    CHECK(ai_config_set_provider(&loaded, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(loaded.bearer_token, SECRET_TOKEN);
+}
+
 static void check_maximum_size_round_trip(void) {
     ai_config_t saved;
     ai_config_t loaded;
@@ -148,6 +187,7 @@ static void check_maximum_size_round_trip(void) {
     memset(saved.host, 'h', sizeof(saved.host) - 1u);
     memset(saved.model, 'm', sizeof(saved.model) - 1u);
     memset(saved.bearer_token, 't', sizeof(saved.bearer_token) - 1u);
+    remember(&saved);
     saved.port = 65535u;
     saved.connect_timeout_ms = AI_CONFIG_CONNECT_TIMEOUT_MS_MAX;
     saved.request_timeout_ms = AI_CONFIG_REQUEST_TIMEOUT_MS_MAX;
@@ -297,6 +337,7 @@ void test_config_store(void) {
     check_load_without_file();
     check_arguments();
     check_round_trip();
+    check_remembered_keys_round_trip();
     check_maximum_size_round_trip();
     check_corrupt_files();
     check_unsaveable_config();

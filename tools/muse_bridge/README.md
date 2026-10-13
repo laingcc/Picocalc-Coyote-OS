@@ -190,7 +190,8 @@ setting for the token.
    **API key** is the single credential setting: for a cloud provider it holds
    that provider's key, and for `muse` it holds the bridge token. It is masked
    while you type it, and stored in plain text in `/coyote/ai.ini` as
-   `bearer_token=`. Choosing a different provider drops it.
+   `bearer_token=`. A key is remembered per provider, so choosing another one
+   and coming back to `muse` brings this token back.
 
    The token from `openssl rand -hex 32` is 64 characters. Rather than typing
    it on the PicoCalc keyboard, you can put it on the SD card from a computer

@@ -83,6 +83,8 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
 }
 
 static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *from) {
+    int slot;
+
     switch (field) {
         case CHAT_SETTING_PROVIDER:
             /* Also moves the host, port and model to the provider's own, and
@@ -91,6 +93,12 @@ static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *
             break;
         case CHAT_SETTING_API_KEY:
             memcpy(config->bearer_token, from->bearer_token, sizeof(config->bearer_token));
+            /* The provider's remembered key is the key in force, or none. */
+            slot = ai_config_key_slot(config->provider);
+            if (slot >= 0) {
+                memcpy(config->provider_keys[slot], from->bearer_token,
+                       sizeof(config->provider_keys[slot]));
+            }
             break;
         case CHAT_SETTING_MODEL:
             memcpy(config->model, from->model, sizeof(config->model));

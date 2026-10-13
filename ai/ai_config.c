@@ -121,6 +121,61 @@ static int known_provider(const char *provider) {
            ai_config_cloud_find(provider) != NULL;
 }
 
+/* The providers whose keys are remembered, in slot order: the two that answer
+ * on the LAN first, then the clouds as the table lists them. */
+static const char *const local_key_providers[] = {AI_CONFIG_PROVIDER_OLLAMA, AI_CONFIG_PROVIDER_MUSE};
+
+int ai_config_key_slot(const char *provider) {
+    size_t i;
+
+    if (provider == NULL) {
+        return -1;
+    }
+    for (i = 0u; i < sizeof(local_key_providers) / sizeof(local_key_providers[0]); i++) {
+        if (strcmp(provider, local_key_providers[i]) == 0) {
+            return (int)i;
+        }
+    }
+    for (i = 0u; i < ai_config_cloud_count(); i++) {
+        if (strcmp(provider, ai_config_cloud_at(i)->name) == 0) {
+            return (int)(sizeof(local_key_providers) / sizeof(local_key_providers[0]) + i);
+        }
+    }
+    return -1;
+}
+
+const char *ai_config_key_slot_name(size_t slot) {
+    size_t local = sizeof(local_key_providers) / sizeof(local_key_providers[0]);
+
+    if (slot < local) {
+        return local_key_providers[slot];
+    }
+    if (slot - local < ai_config_cloud_count()) {
+        return ai_config_cloud_at(slot - local)->name;
+    }
+    return NULL;
+}
+
+/* Remember the key in force under the provider it belongs to. */
+static void remember_key(ai_config_t *config) {
+    int slot = ai_config_key_slot(config->provider);
+
+    if (slot >= 0) {
+        memcpy(config->provider_keys[slot], config->bearer_token,
+               sizeof(config->provider_keys[slot]));
+    }
+}
+
+/* Put a remembered key back in force, if the provider has one. */
+static void recall_key(ai_config_t *config) {
+    int slot = ai_config_key_slot(config->provider);
+
+    memset(config->bearer_token, 0, sizeof(config->bearer_token));
+    if (slot >= 0) {
+        memcpy(config->bearer_token, config->provider_keys[slot], sizeof(config->bearer_token));
+    }
+}
+
 int ai_config_is_deepseek(const ai_config_t *config) {
     return config != NULL && strcmp(config->provider, AI_CONFIG_PROVIDER_DEEPSEEK) == 0;
 }
@@ -184,11 +239,29 @@ static void use_cloud_endpoint(ai_config_t *config, const ai_config_cloud_t *clo
     memcpy(config->model, cloud->models[0], strlen(cloud->models[0]) + 1u);
 }
 
+/* A remembered key is held to the rule the key in force is held to: whatever
+ * the provider, it is only ever sent as a header value. */
+static int invalid_remembered_key(const ai_config_t *config) {
+    size_t slot;
+
+    for (slot = 0u; slot < AI_CONFIG_KEY_SLOT_COUNT; slot++) {
+        if (config->provider_keys[slot][0] != '\0' &&
+            !ai_config_bearer_token_valid(config->provider_keys[slot])) {
+            return KEY_BEARER_TOKEN;
+        }
+    }
+    return KEY_UNKNOWN;
+}
+
 ai_config_status_t ai_config_validate(const ai_config_t *config) {
     if (config == NULL) {
         return AI_CONFIG_INVALID_ARGUMENT;
     }
-    return invalid_provider_field(config) == KEY_UNKNOWN ? AI_CONFIG_OK : AI_CONFIG_INVALID_VALUE;
+    if (invalid_provider_field(config) != KEY_UNKNOWN ||
+        invalid_remembered_key(config) != KEY_UNKNOWN) {
+        return AI_CONFIG_INVALID_VALUE;
+    }
+    return AI_CONFIG_OK;
 }
 
 ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provider) {
@@ -201,9 +274,10 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     if (strcmp(config->provider, provider) == 0) {
         return AI_CONFIG_OK;
     }
-    /* The key belongs to the provider it was typed for, so changing provider
-     * always drops it: no key is ever offered to a host it was not meant for. */
-    memset(config->bearer_token, 0, sizeof(config->bearer_token));
+    /* The key belongs to the provider it was typed for: it is put away under
+     * that provider, and the provider being chosen recalls its own key, if it
+     * has one.  No key is ever offered to a host it was not meant for. */
+    remember_key(config);
     if (ai_config_cloud(config) != NULL) {
         /* Nothing of the provider being left goes to the next one. */
         memset(config->host, 0, sizeof(config->host));
@@ -221,6 +295,7 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     }
     memset(config->provider, 0, sizeof(config->provider));
     memcpy(config->provider, provider, strlen(provider) + 1u);
+    recall_key(config);
     return AI_CONFIG_OK;
 }
 
@@ -244,12 +319,66 @@ static ai_config_status_t fail(ai_config_parser_t *parser, ai_config_status_t st
     return status;
 }
 
+/* The same, naming a line that is not in the fixed table. */
+static ai_config_status_t fail_name(ai_config_parser_t *parser, ai_config_status_t status,
+                                    const char *name) {
+    size_t length = strlen(name);
+
+    parser->status = status;
+    parser->error_key[0] = '\0';
+    if (length < sizeof(parser->error_key)) {
+        memcpy(parser->error_key, name, length + 1u);
+    }
+    return status;
+}
+
+/* The same as copy_value, for a line whose name is not in the fixed table. */
+static ai_config_status_t copy_value_named(ai_config_parser_t *parser, char *destination,
+                                           size_t capacity, const char *value, const char *name) {
+    size_t length = strlen(value);
+    if (length >= capacity) {
+        return fail_name(parser, AI_CONFIG_VALUE_TOO_LONG, name);
+    }
+    memset(destination, 0, capacity);
+    memcpy(destination, value, length + 1u);
+    return AI_CONFIG_OK;
+}
+
+/* A "key_<provider>=" line remembers the key of a provider, which need not be
+ * the one in force, so a key survives switching away and back.  A name that
+ * does not name a provider is ignored, like any other unknown name. */
+static ai_config_status_t parse_provider_key(ai_config_parser_t *parser, const char *name,
+                                             const char *value) {
+    ai_config_t *config = parser->config;
+    unsigned char bit;
+    int slot;
+
+    if (strncmp(name, "key_", 4u) != 0) {
+        return AI_CONFIG_OK;
+    }
+    slot = ai_config_key_slot(name + 4u);
+    if (slot < 0) {
+        return AI_CONFIG_OK;
+    }
+    bit = (unsigned char)(1u << (unsigned)slot);
+    if ((parser->seen_slots & bit) != 0u) {
+        return fail_name(parser, AI_CONFIG_DUPLICATE_KEY, name);
+    }
+    parser->seen_slots |= bit;
+    return copy_value_named(parser, config->provider_keys[slot],
+                            sizeof(config->provider_keys[slot]), value, name);
+}
+
 static ai_config_status_t copy_value(ai_config_parser_t *parser, int id, char *destination,
                                      size_t capacity, const char *value) {
     size_t length = strlen(value);
     if (length >= capacity) {
         return fail(parser, AI_CONFIG_VALUE_TOO_LONG, id);
     }
+    /* A value shorter than the one it replaces leaves nothing of it behind:
+     * the default provider, for one, is longer than some names that replace
+     * it. */
+    memset(destination, 0, capacity);
     memcpy(destination, value, length + 1u);
     return AI_CONFIG_OK;
 }
@@ -396,6 +525,7 @@ static ai_config_status_t parse_line(ai_config_parser_t *parser) {
     char *begin = parser->line;
     char *end = begin + parser->line_length;
     char *separator;
+    char *name;
     int id;
 
     if (end > begin && end[-1] == '\r') {
@@ -426,9 +556,7 @@ static ai_config_status_t parse_line(ai_config_parser_t *parser) {
     }
 
     id = key_id(begin);
-    if (id == KEY_UNKNOWN) {
-        return AI_CONFIG_OK;
-    }
+    name = begin;
 
     begin = separator + 1;
     while (*begin == ' ' || *begin == '\t') {
@@ -442,6 +570,11 @@ static ai_config_status_t parse_line(ai_config_parser_t *parser) {
         end--;
     }
     *end = '\0';
+    if (id == KEY_UNKNOWN) {
+        /* Either a per-provider key line or a name from another version of the
+         * firmware; the latter is ignored, as it always has been. */
+        return parse_provider_key(parser, name, begin);
+    }
     return parse_known(parser, id, begin);
 }
 
@@ -520,6 +653,13 @@ static ai_config_status_t finish_provider(ai_config_parser_t *parser) {
         if (config->model[0] == '\0') {
             memcpy(config->model, cloud->models[0], strlen(cloud->models[0]) + 1u);
         }
+    }
+    /* The key in force and the one remembered for its provider are the same
+     * key, and a file may name either: make them agree. */
+    if (config->bearer_token[0] == '\0') {
+        recall_key(config);
+    } else {
+        remember_key(config);
     }
     id = invalid_provider_field(config);
     return id == KEY_UNKNOWN ? AI_CONFIG_OK : fail(parser, AI_CONFIG_INVALID_VALUE, id);
@@ -611,10 +751,30 @@ static uint32_t magnitude_of(int32_t number) {
     return number < 0 ? (uint32_t)-number : (uint32_t)number;
 }
 
+/* Bytes the "key_<provider>=" lines take: one for every remembered key that is
+ * not the one in force, which is written as bearer_token instead. */
+static size_t remembered_key_length(const ai_config_t *config) {
+    size_t total = 0u;
+    size_t slot;
+    int current = ai_config_key_slot(config->provider);
+
+    for (slot = 0u; slot < AI_CONFIG_KEY_SLOT_COUNT; slot++) {
+        const char *name = ai_config_key_slot_name(slot);
+        const char *key = config->provider_keys[slot];
+        if (name == NULL || key[0] == '\0' || (int)slot == current) {
+            continue;
+        }
+        /* "key_" name "=" key "\n" */
+        total += 6u + strlen(name) + strlen(key);
+    }
+    return total;
+}
+
 ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destination,
                                        size_t capacity, size_t *length) {
     size_t required;
     size_t offset = 0u;
+    size_t slot;
 
     if (config == NULL || length == NULL || (destination == NULL && capacity != 0u)) {
         return AI_CONFIG_INVALID_ARGUMENT;
@@ -624,6 +784,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         !serializable_text(config->password, sizeof(config->password), 1) ||
         !serializable_text(config->provider, sizeof(config->provider), 0) ||
         !known_provider(config->provider) || invalid_provider_field(config) != KEY_UNKNOWN ||
+        invalid_remembered_key(config) != KEY_UNKNOWN ||
         !serializable_text(config->host, sizeof(config->host), 1) ||
         !serializable_text(config->model, sizeof(config->model), 1) ||
         !serializable_text(config->bearer_token, sizeof(config->bearer_token), 1) ||
@@ -659,7 +820,8 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("system_prompt=\n") - 1u + strlen(config->system_prompt) +
                sizeof("temperature=\n") - 1u + decimal_length(config->temperature) +
                sizeof("utc_offset_minutes=\n") - 1u + (config->utc_offset_minutes < 0 ? 1u : 0u) +
-               decimal_length(magnitude_of(config->utc_offset_minutes));
+               decimal_length(magnitude_of(config->utc_offset_minutes)) +
+               remembered_key_length(config);
     *length = required;
     if (destination == NULL || capacity <= required) {
         return AI_CONFIG_NO_SPACE;
@@ -699,6 +861,22 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                 config->utc_offset_minutes < 0 ? "utc_offset_minutes=-" : "utc_offset_minutes=");
     append_number(destination, &offset, magnitude_of(config->utc_offset_minutes));
     destination[offset++] = '\n';
+
+    /* The key in force is the bearer_token line above.  Every other remembered
+     * key is written under the provider it belongs to, so it is still there
+     * after a switch. */
+    for (slot = 0u; slot < AI_CONFIG_KEY_SLOT_COUNT; slot++) {
+        const char *name = ai_config_key_slot_name(slot);
+        if (name == NULL || config->provider_keys[slot][0] == '\0' ||
+            (int)slot == ai_config_key_slot(config->provider)) {
+            continue;
+        }
+        append_text(destination, &offset, "key_");
+        append_text(destination, &offset, name);
+        destination[offset++] = '=';
+        append_text(destination, &offset, config->provider_keys[slot]);
+        destination[offset++] = '\n';
+    }
 
 #undef APPEND_NUMBER_FIELD
 #undef APPEND_FIELD
