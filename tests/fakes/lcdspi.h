@@ -26,6 +26,7 @@ void lcd_print_string(char *s);
 void lcd_set_text_color(int fc, int bc);
 void draw_rect_spi(int x1, int y1, int x2, int y2, int c);
 void spi_draw_pixel(uint16_t x, uint16_t y, uint32_t color);
+void draw_rgb565_spi(int x, int y, int width, int height, const uint16_t *pixels, int stride);
 void set_current_x(int x);
 void set_current_y(int y);
 

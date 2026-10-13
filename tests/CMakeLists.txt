@@ -62,6 +62,7 @@ target_compile_options(coyote_ai PRIVATE -Wall -Wextra -Werror)
 add_library(coyote_ui STATIC
     "${COYOTE_ROOT}/UI/ui.c"
     "${COYOTE_ROOT}/UI/chat_mode.c"
+    "${COYOTE_ROOT}/UI/muse_avatar.c"
     "${COYOTE_ROOT}/tinyexpr/tinyexpr.c"
 )
 set_source_files_properties("${COYOTE_ROOT}/UI/chat_mode.c" PROPERTIES

@@ -13,6 +13,7 @@
 #include "ai/config_store.h"
 #include "ai/conv_store.h"
 #include "time/time_service.h"
+#include "muse_avatar.h"
 
 #define COLS (LCD_WIDTH / 8)
 #define ROW_H 12
@@ -22,7 +23,6 @@
 #define COMPOSER_ROW (TRANSCRIPT_ROW + TRANSCRIPT_ROWS)
 #define COMPOSER_ROWS 3
 #define GUTTER 2
-#define TEXT_COLS (COLS - GUTTER)
 #define SCROLL_STEP 4
 #define STREAM_REDRAW_MS 100
 #define NOTE_MAX 30
@@ -43,6 +43,7 @@ static char conv_labels[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 3u]
 static const char *conv_label_ptrs[CONV_STORE_MAX_CONVERSATIONS];
 static size_t scroll;       /* rows scrolled back from the newest line */
 static uint32_t transcript_drawn_ms;
+static uint32_t avatar_drawn_ms;
 static bool transcript_dirty, composer_dirty;
 
 static void sync_with_transport(void);
@@ -100,15 +101,51 @@ static void draw_status(bool force) {
     draw_cells(STATUS_ROW, 0, line, strlen(line), COLS, WHITE, GRAY);
 }
 
+/* The Muse avatar sits in the right-hand cells of the transcript, so its chat
+ * wraps its text narrower than every other provider's. */
+static bool avatar_shown(void) {
+    return muse_avatar_available() && strcmp(config.provider, AI_CONFIG_PROVIDER_MUSE) == 0;
+}
+
+static size_t transcript_columns(void) {
+    return chat_layout_transcript_columns(config.provider, avatar_shown() ? 1 : 0);
+}
+
+/* What the avatar is doing: the reply is being written or awaited, it failed,
+ * or nothing is happening. */
+static muse_avatar_mode_t avatar_mode(void) {
+    size_t count = chat_model_message_count(&chat);
+    const chat_message_t *last = count > 0u ? chat_model_message_at(&chat, count - 1u) : NULL;
+
+    if (chat_model_is_streaming(&chat)) {
+        return last != NULL && last->length > 0u ? MUSE_AVATAR_SPEAKING : MUSE_AVATAR_THINKING;
+    }
+    if (last != NULL && last->partial) return MUSE_AVATAR_ERROR;
+    return MUSE_AVATAR_IDLE;
+}
+
+/* Repaint the avatar when the frame is due, so animating it never delays the
+ * keyboard, the network or the transcript behind it. */
+static void draw_avatar(bool force) {
+    uint32_t now;
+
+    if (!avatar_shown()) return;
+    now = to_ms_since_boot(get_absolute_time());
+    if (!force && !chat_layout_avatar_refresh_due(now, avatar_drawn_ms)) return;
+    avatar_drawn_ms = now;
+    muse_avatar_draw(LCD_WIDTH - MUSE_AVATAR_SIZE, TRANSCRIPT_ROW * ROW_H, avatar_mode());
+}
+
 /* Rows a message occupies: its wrapped text, plus one marker row when the
  * reply is still empty ("...") or was cut short ("[incomplete]"). */
 static size_t message_rows(const chat_message_t *m) {
-    size_t rows = chat_layout_count_lines(m->text, m->length, TEXT_COLS);
+    size_t rows = chat_layout_count_lines(m->text, m->length, transcript_columns());
     return rows + ((m->partial || m->length == 0) ? 1 : 0);
 }
 
 static void draw_transcript(void) {
     size_t count = chat_model_message_count(&chat), total = 0, row = 0, first, max_scroll;
+    size_t cols = transcript_columns(), fill = cols + GUTTER;
     int drawn = 0;
 
     if (count == 0) {
@@ -116,7 +153,7 @@ static void draw_transcript(void) {
                                            "Esc cancels a reply.  Up/Down scroll.", "F5: model, Wi-Fi and settings."};
         for (int i = 0; i < TRANSCRIPT_ROWS; i++) {
             const char *text = i < 5 ? hint[i] : "";
-            draw_cells(TRANSCRIPT_ROW + i, 0, text, strlen(text), COLS, GRAY, BLACK);
+            draw_cells(TRANSCRIPT_ROW + i, 0, text, strlen(text), (int)fill, GRAY, BLACK);
         }
         transcript_dirty = false;
         return;
@@ -134,10 +171,10 @@ static void draw_transcript(void) {
         size_t offset = 0;
         bool lead = true;
         while (offset < m->length && drawn < TRANSCRIPT_ROWS) {
-            size_t len, next = chat_layout_next_line(m->text, m->length, offset, TEXT_COLS, &len);
+            size_t len, next = chat_layout_next_line(m->text, m->length, offset, cols, &len);
             if (row >= first) {
                 draw_cells(TRANSCRIPT_ROW + drawn, 0, ">", lead && user ? 1 : 0, GUTTER, fg, BLACK);
-                draw_cells(TRANSCRIPT_ROW + drawn, GUTTER, m->text + offset, len, TEXT_COLS, fg, BLACK);
+                draw_cells(TRANSCRIPT_ROW + drawn, GUTTER, m->text + offset, len, (int)cols, fg, BLACK);
                 drawn++;
             }
             row++; offset = next; lead = false;
@@ -146,13 +183,13 @@ static void draw_transcript(void) {
             const char *mark = m->partial ? "[incomplete]" : "...";
             if (row >= first) {
                 draw_cells(TRANSCRIPT_ROW + drawn, 0, "", 0, GUTTER, fg, BLACK);
-                draw_cells(TRANSCRIPT_ROW + drawn, GUTTER, mark, strlen(mark), TEXT_COLS, m->partial ? RED : GRAY, BLACK);
+                draw_cells(TRANSCRIPT_ROW + drawn, GUTTER, mark, strlen(mark), (int)cols, m->partial ? RED : GRAY, BLACK);
                 drawn++;
             }
             row++;
         }
     }
-    for (; drawn < TRANSCRIPT_ROWS; drawn++) draw_cells(TRANSCRIPT_ROW + drawn, 0, "", 0, COLS, WHITE, BLACK);
+    for (; drawn < TRANSCRIPT_ROWS; drawn++) draw_cells(TRANSCRIPT_ROW + drawn, 0, "", 0, (int)fill, WHITE, BLACK);
     transcript_dirty = false;
     transcript_drawn_ms = to_ms_since_boot(get_absolute_time());
 }
@@ -178,6 +215,7 @@ void chat_mode_redraw(void) {
     draw_status(true);
     draw_transcript();
     draw_composer();
+    draw_avatar(true);
     draw_rect_spi(0, (COMPOSER_ROW + COMPOSER_ROWS) * ROW_H, LCD_WIDTH - 1, LCD_HEIGHT - 1, WHITE);
 }
 
@@ -188,6 +226,7 @@ static void refresh(void) {
             to_ms_since_boot(get_absolute_time()) - transcript_drawn_ms >= STREAM_REDRAW_MS))
         draw_transcript();
     if (composer_dirty) draw_composer();
+    draw_avatar(false);
     draw_status(false);
 }
 

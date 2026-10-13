@@ -124,5 +124,6 @@ void test_chat_layout(void) {
     check_wrapping();
     check_counts();
     check_edges();
+    check_avatar_layout_policy();
     check_progress();
 }
