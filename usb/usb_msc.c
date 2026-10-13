@@ -82,6 +82,20 @@ bool tud_msc_is_writable_cb(uint8_t lun) {
     return true;
 }
 
+/*
+ * Everything a plain disk is asked that the class driver does not answer
+ * itself.  A card is a card: nothing here needs to be handled, and a command
+ * that is not one of the built-ins is refused the way SCSI expects.
+ */
+int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer, uint16_t bufsize) {
+    (void)scsi_cmd;
+    (void)buffer;
+    (void)bufsize;
+    /* Nothing beyond the built-ins is supported, and SCSI is told so. */
+    tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
+    return -1;
+}
+
 /* The cable, as opposed to the volume: what the screen reports. */
 void tud_mount_cb(void) {
     usb_disk_set_host_attached(true);
