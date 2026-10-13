@@ -43,13 +43,16 @@ add_library(coyote_ai STATIC
     "${COYOTE_ROOT}/tls/tls_trust.c"
     "${COYOTE_ROOT}/storage/export.c"
     "${COYOTE_ROOT}/storage/file_store.c"
+    # The card as a USB disk: its own module, and the tests that drive it with
+    # a card that is a buffer.
+    "${COYOTE_ROOT}/storage/usb_disk.c"
     "${COYOTE_ROOT}/storage/screenshot.c"
 )
 # The store's rename goes through a test double so the tests can fail it and
 # imitate FAT, which will not rename over an existing file.
 set_source_files_properties("${COYOTE_ROOT}/storage/file_store.c" PROPERTIES
     COMPILE_DEFINITIONS "rename=file_store_test_rename")
-target_include_directories(coyote_ai PUBLIC "${COYOTE_ROOT}")
+target_include_directories(coyote_ai PUBLIC "${COYOTE_ROOT}" "${COYOTE_ROOT}/pico-vfs/include")
 target_compile_options(coyote_ai PRIVATE -Wall -Wextra -Werror)
 
 # The firmware's menus, built unmodified against fake hardware headers so the
@@ -91,6 +94,7 @@ add_executable(coyote_ai_tests
     test_wifi_scan.c
     test_time_sync.c
     test_mode_menu.c
+    test_usb_disk.c
 )
 target_link_libraries(coyote_ai_tests PRIVATE coyote_ui coyote_ai)
 target_compile_options(coyote_ai_tests PRIVATE -Wall -Wextra -Werror)

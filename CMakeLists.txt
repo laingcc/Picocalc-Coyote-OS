@@ -51,6 +51,10 @@ add_executable(coyote
         storage/export.c
         storage/file_store.c
         storage/screenshot.c
+        storage/usb_disk.c
+        # The card as a USB disk: descriptors and the mass-storage glue.
+        usb/usb_descriptors.c
+        usb/usb_msc.c
 )
 
 ##picocalc spi0
@@ -191,5 +195,10 @@ endif()
 
 pico_enable_stdio_usb(coyote 0)
 pico_enable_stdio_uart(coyote 1)
+
+# The USB disk mode runs TinyUSB itself, so the device stack is linked in and
+# usb/ holds tusb_config.h, which TinyUSB looks up by name.
+target_include_directories(coyote PRIVATE ${CMAKE_CURRENT_LIST_DIR}/usb)
+target_link_libraries(coyote PRIVATE tinyusb_device)
 
 pico_add_extra_outputs(coyote)

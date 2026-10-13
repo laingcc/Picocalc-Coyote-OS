@@ -19,6 +19,8 @@
 #include "ai/app_services.h"
 #include "time/time_service.h"
 #include "storage/screenshot.h"
+#include "storage/usb_disk.h"
+#include "usb/usb_msc.h"
 
 #define COYOTE_DIR "/coyote"
 #define KEY_SCREENSHOT 0x13 /* Ctrl+S */
@@ -76,11 +78,73 @@ void handle_keyboard() {
     }
 }
 
+/* The card, kept so the USB disk mode can hand it over. */
+static blockdevice_t *sd_card;
+
 bool fs_init(void) {
-    blockdevice_t *sd = blockdevice_sd_create(spi0, SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN, 125000000/8, true);
+    sd_card = blockdevice_sd_create(spi0, SD_MOSI_PIN, SD_MISO_PIN, SD_SCLK_PIN, SD_CS_PIN, 125000000/8, true);
+    if (sd_card == NULL) return false;
     filesystem_t *fat = filesystem_fat_create();
     /* A card that does not mount is left alone: never format it. */
-    return fs_mount("/", fat, sd) == 0;
+    return fs_mount("/", fat, sd_card) == 0;
+}
+
+/*
+ * Hand the card to a computer over USB.
+ *
+ * The firmware's filesystem is unmounted for the duration: the host owns the
+ * card's sectors while this runs, and a FAT reader on this side would corrupt
+ * them.  Nothing else touches the card either - the main loop runs this mode
+ * rather than the usual keyboard and services - and when it is over the card
+ * is brought up again from scratch, since the host may have swapped it.
+ */
+static void usb_disk_mode(void) {
+    uint32_t next_check;
+    bool written;
+
+    if (sd_card == NULL) { ui_show_notice("No SD card"); return; }
+    if (app_services_chat_active()) { ui_show_notice("Reply in progress"); return; }
+
+    fs_unmount("/");
+    usb_disk_begin(sd_card);
+    usb_msc_begin();
+    if (!usb_msc_started()) {
+        usb_disk_end();
+        fs_mount("/", filesystem_fat_create(), sd_card);
+        ui_show_notice("USB unavailable");
+        return;
+    }
+    sound_play(SND_BEEP);
+    ui_usb_disk_show(usb_disk_host_attached(), usb_disk_block_count());
+
+    next_check = to_ms_since_boot(get_absolute_time());
+    for (;;) {
+        /* The transfers are serviced here, so the loop stays tight; the screen
+         * and the keyboard are seen to far less often. */
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        usb_msc_poll();
+        if (now < next_check) { tight_loop_contents(); continue; }
+        next_check = now + 100u;
+        ui_usb_disk_show(usb_disk_host_attached(), usb_disk_block_count());
+        int key = lcd_getc(0);
+        if (key == KEY_ESC || key == KEY_HOME) break;
+    }
+
+    usb_msc_end();
+    usb_disk_end();
+    written = usb_disk_take_written();
+
+    if (sd_card->deinit != NULL) sd_card->deinit(sd_card);
+    if (fs_mount("/", filesystem_fat_create(), sd_card) != 0) {
+        ui_show_notice("SD card not mounted");
+        return;
+    }
+    ui_usb_disk_done();
+    if (written) {
+        /* The settings file may have been edited while the host had it. */
+        chat_mode_reload_settings();
+        ui_show_notice("Settings reloaded");
+    }
 }
 
 /* Background work: runs on every main loop iteration and while a menu waits. */
@@ -107,5 +171,12 @@ int main() {
     ui_set_idle_hook(services_poll);
     chat_mode_init();
 
-    while (1) { handle_keyboard(); services_poll(); sleep_ms(20); }
+    while (1) {
+        handle_keyboard();
+        /* The mode menu asks for the card; it is handed over here, where the
+         * filesystem and the main loop are. */
+        if (ui_take_usb_disk_request()) usb_disk_mode();
+        services_poll();
+        sleep_ms(20);
+    }
 }
