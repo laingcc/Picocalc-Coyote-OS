@@ -19,14 +19,13 @@ enum {
     KEY_SYSTEM_PROMPT,
     KEY_TEMPERATURE,
     KEY_UTC_OFFSET,
-    KEY_API_TOKEN,
     KEY_UNKNOWN
 };
 
 static const char *const key_names[] = {
     "version", "ssid", "password", "provider", "host", "port", "model",
     "bearer_token", "connect_timeout_ms", "request_timeout_ms", "idle_timeout_ms",
-    "max_predict", "system_prompt", "temperature", "utc_offset_minutes", "api_token"
+    "max_predict", "system_prompt", "temperature", "utc_offset_minutes"
 };
 
 ai_config_status_t ai_config_init(ai_config_t *config) {
@@ -202,15 +201,23 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     if (strcmp(config->provider, provider) == 0) {
         return AI_CONFIG_OK;
     }
+    /* The key belongs to the provider it was typed for, so changing provider
+     * always drops it: no key is ever offered to a host it was not meant for. */
+    memset(config->bearer_token, 0, sizeof(config->bearer_token));
     if (ai_config_cloud(config) != NULL) {
         /* Nothing of the provider being left goes to the next one. */
         memset(config->host, 0, sizeof(config->host));
         config->port = AI_CONFIG_OLLAMA_PORT;
         memset(config->model, 0, sizeof(config->model));
-        memset(config->bearer_token, 0, sizeof(config->bearer_token));
     }
     if (ai_config_cloud_find(provider) != NULL) {
         use_cloud_endpoint(config, ai_config_cloud_find(provider));
+    } else if (strcmp(provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
+        /* The bridge is the user's own machine, so only the port and the one
+         * model it serves are filled in; the host is theirs to type. */
+        config->port = AI_CONFIG_MUSE_PORT;
+        memset(config->model, 0, sizeof(config->model));
+        memcpy(config->model, AI_CONFIG_MUSE_MODEL, strlen(AI_CONFIG_MUSE_MODEL) + 1u);
     }
     memset(config->provider, 0, sizeof(config->provider));
     memcpy(config->provider, provider, strlen(provider) + 1u);
@@ -245,23 +252,6 @@ static ai_config_status_t copy_value(ai_config_parser_t *parser, int id, char *d
     }
     memcpy(destination, value, length + 1u);
     return AI_CONFIG_OK;
-}
-
-/* A token may hold only what is safe inside an HTTP header value: visible
- * ASCII, so no blanks, control characters or bytes above 0x7e. */
-static int token_text(const char *text) {
-    const unsigned char *p;
-    for (p = (const unsigned char *)text; *p != '\0'; p++) {
-        if (*p < 0x21u || *p > 0x7eu) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-int ai_config_api_token_valid(const char *token) {
-    return token != NULL && token[0] != '\0' && strlen(token) < AI_CONFIG_API_TOKEN_CAPACITY &&
-           token_text(token);
 }
 
 static ai_config_status_t parse_u32(ai_config_parser_t *parser, int id, const char *value,
@@ -397,11 +387,6 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
                 config->utc_offset_minutes = (int16_t)offset;
             }
             return status;
-        case KEY_API_TOKEN:
-            if (!token_text(value)) {
-                return fail(parser, AI_CONFIG_INVALID_VALUE, id);
-            }
-            return copy_value(parser, id, config->api_token, sizeof(config->api_token), value);
         default:
             return AI_CONFIG_OK;
     }
@@ -643,8 +628,6 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
         !serializable_text(config->model, sizeof(config->model), 1) ||
         !serializable_text(config->bearer_token, sizeof(config->bearer_token), 1) ||
         !serializable_text(config->system_prompt, sizeof(config->system_prompt), 1) ||
-        !serializable_text(config->api_token, sizeof(config->api_token), 1) ||
-        !token_text(config->api_token) ||
         config->port == 0u ||
         config->connect_timeout_ms < AI_CONFIG_CONNECT_TIMEOUT_MS_MIN ||
         config->connect_timeout_ms > AI_CONFIG_CONNECT_TIMEOUT_MS_MAX ||
@@ -676,8 +659,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("system_prompt=\n") - 1u + strlen(config->system_prompt) +
                sizeof("temperature=\n") - 1u + decimal_length(config->temperature) +
                sizeof("utc_offset_minutes=\n") - 1u + (config->utc_offset_minutes < 0 ? 1u : 0u) +
-               decimal_length(magnitude_of(config->utc_offset_minutes)) +
-               sizeof("api_token=\n") - 1u + strlen(config->api_token);
+               decimal_length(magnitude_of(config->utc_offset_minutes));
     *length = required;
     if (destination == NULL || capacity <= required) {
         return AI_CONFIG_NO_SPACE;
@@ -717,7 +699,6 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                 config->utc_offset_minutes < 0 ? "utc_offset_minutes=-" : "utc_offset_minutes=");
     append_number(destination, &offset, magnitude_of(config->utc_offset_minutes));
     destination[offset++] = '\n';
-    APPEND_FIELD("api_token", config->api_token);
 
 #undef APPEND_NUMBER_FIELD
 #undef APPEND_FIELD

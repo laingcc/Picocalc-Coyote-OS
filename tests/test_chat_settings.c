@@ -50,7 +50,7 @@ static void check_text_fields(void) {
     /* Rejections leave the old value in place. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.host, "192.168.1.20");
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+    /* Muse is a provider of its own now; an unknown name is still refused. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.provider, "ollama");
     CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, " padded") == AI_CONFIG_INVALID_VALUE);
@@ -221,62 +221,6 @@ static void check_password_is_never_shown(void) {
     CHECK_STR_EQ(config.password, "");
 }
 
-static void check_api_token_is_never_shown(void) {
-    ai_config_t config;
-    char out[160];
-    char longest[160];
-    ai_config_init(&config);
-
-    CHECK_STR_EQ(chat_settings_label(CHAT_SETTING_API_TOKEN), "API token");
-    CHECK(chat_settings_is_secret(CHAT_SETTING_API_TOKEN));
-    CHECK(chat_settings_allows_empty(CHAT_SETTING_API_TOKEN));
-
-    /* Unset by default, and shown as unset. */
-    CHECK(config.api_token[0] == '\0');
-    CHECK(chat_settings_format(&config, CHAT_SETTING_API_TOKEN, out, sizeof(out)) == 0u);
-    CHECK_STR_EQ(out, "");
-
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN,
-                            "9f8e7d6c5b4a39281706f5e4d3c2b1a0") == AI_CONFIG_OK);
-    CHECK(strcmp(config.api_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0") == 0);
-    CHECK(chat_settings_format(&config, CHAT_SETTING_API_TOKEN, out, sizeof(out)) == 8u);
-    CHECK_STR_EQ(out, "********");
-
-    /* The mask does not track the length, and no field's display leaks it. */
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "zq7") == AI_CONFIG_OK);
-    chat_settings_format(&config, CHAT_SETTING_API_TOKEN, out, sizeof(out));
-    CHECK_STR_EQ(out, "********");
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "zq7-token-zq7") == AI_CONFIG_OK);
-    for (int i = 0; i < CHAT_SETTING_COUNT; i++) {
-        chat_settings_format(&config, (chat_setting_t)i, out, sizeof(out));
-        CHECK(strstr(out, "zq7") == NULL);
-    }
-
-    /* Only the edited field changes. */
-    CHECK_STR_EQ(config.password, "");
-    CHECK_STR_EQ(config.bearer_token, "");
-    CHECK(config.port == 11434u);
-
-    /* Anything that is not visible ASCII is refused and changes nothing. */
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "two words") == AI_CONFIG_INVALID_VALUE);
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, " lead") == AI_CONFIG_INVALID_VALUE);
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "a\r\nX-Evil: 1") == AI_CONFIG_INVALID_VALUE);
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "tab\tbed") == AI_CONFIG_INVALID_VALUE);
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "caf\xc3\xa9") == AI_CONFIG_INVALID_VALUE);
-    CHECK(strcmp(config.api_token, "zq7-token-zq7") == 0);
-
-    memset(longest, 'k', sizeof(longest));
-    longest[127] = '\0';
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, longest) == AI_CONFIG_OK);
-    memset(longest, 'k', sizeof(longest));
-    longest[128] = '\0';
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, longest) == AI_CONFIG_VALUE_TOO_LONG);
-    CHECK(strlen(config.api_token) == 127u);
-
-    CHECK(chat_settings_set(&config, CHAT_SETTING_API_TOKEN, "") == AI_CONFIG_OK);
-    CHECK(config.api_token[0] == '\0');
-}
-
 static void check_arguments_and_truncation(void) {
     ai_config_t config;
     char out[8];
@@ -374,8 +318,12 @@ static void check_deepseek_provider(void) {
     CHECK_STR_EQ(config.ssid, "Home Net");
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
     CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_OK);
-    /* Muse is still not selectable here, as before. */
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+    /* Muse is selectable: the bridge speaks Ollama's protocol, with its own
+     * port and its one model. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "muse");
+    CHECK(config.port == 8765u);
+    CHECK_STR_EQ(config.model, "muse");
 }
 
 static void check_api_key_is_never_shown(void) {
@@ -432,9 +380,8 @@ void test_chat_settings(void) {
     check_numeric_bounds();
     check_utc_offset();
     check_password_is_never_shown();
-    check_api_token_is_never_shown();
+    check_api_key_is_never_shown();
     check_arguments_and_truncation();
     check_temperature();
     check_deepseek_provider();
-    check_api_key_is_never_shown();
 }

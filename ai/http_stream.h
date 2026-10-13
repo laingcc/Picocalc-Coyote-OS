@@ -217,11 +217,12 @@ typedef struct {
     const char *path;
     const char *content_type;
     /* Sent as "Authorization: Bearer ***" when not NULL or empty, and only
-     * over TLS; it must then be a valid bearer token, never logged. */
+     * over TLS unless allow_plain_token says the host is the bridge on this
+     * LAN; it must then be a valid bearer token, and is never logged. */
     const char *bearer_token;
-    /* The bridge's token: the same header, but allowed over plain HTTP, since
-     * the bridge is reached on the LAN.  Only one credential may be set. */
-    const char *api_token;
+    /* Set only for the Muse bridge, which speaks plain HTTP: the token above
+     * may then travel in clear.  Never set for a cloud provider. */
+    bool allow_plain_token;
     const char *api_key_header;
     const char *api_key;
     const char *extra_header;

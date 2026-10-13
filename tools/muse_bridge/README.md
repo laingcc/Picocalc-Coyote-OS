@@ -176,25 +176,29 @@ setting for the token.
    ExecStart=/opt/coyote-muse-bridge/.venv/bin/coyote-muse-bridge --token-file /etc/coyote-muse-bridge/token --bind 192.168.1.20
    ```
 
-2. On the PicoCalc press F5 in chat mode, choose **Connection settings**, and
-   set:
+2. On the PicoCalc press F5 in chat mode, choose **Connection settings**, then
+   **Provider** and pick **muse** (it sits right after `ollama`): that fills in
+   **Port** `8765` and **Model** `muse`. Set the one remaining value:
 
    | Setting | Value |
    | --- | --- |
    | Host | the bridge machine's LAN IP address, e.g. `192.168.1.20` |
-   | Port | `8765` |
-   | Model | `muse` |
-   | API token | the contents of `/etc/coyote-muse-bridge/token` |
+   | API key | the contents of `/etc/coyote-muse-bridge/token` |
 
    then **Apply & connect**.
 
+   **API key** is the single credential setting: for a cloud provider it holds
+   that provider's key, and for `muse` it holds the bridge token. It is masked
+   while you type it, and stored in plain text in `/coyote/ai.ini` as
+   `bearer_token=`. Choosing a different provider drops it.
+
    The token from `openssl rand -hex 32` is 64 characters. Rather than typing
    it on the PicoCalc keyboard, you can put it on the SD card from a computer
-   by adding one line to `/coyote/ai.ini` (the firmware accepts up to 127
-   visible ASCII characters, no spaces):
+   by adding one line to `/coyote/ai.ini` (it must look like a bearer token:
+   letters, digits and `-._~+/`, with any `=` padding last):
 
    ```ini
-   api_token=<contents of /etc/coyote-muse-bridge/token>
+   bearer_token=<contents of /etc/coyote-muse-bridge/token>
    ```
 
    Read the token with `sudo cat /etc/coyote-muse-bridge/token` on the bridge

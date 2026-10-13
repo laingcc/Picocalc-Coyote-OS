@@ -1001,9 +1001,10 @@ static void check_start_validation_and_reuse(void) {
     }
 }
 
-/* Start a request carrying the bridge's api_token and run it until the request
- * is on the wire.  Returns what http_stream_start returned. */
-static int start_with_token(harness_t *h, const char *host, const char *api_token) {
+/* Start a request carrying a token and run it until the request is on the
+ * wire; plain says the host is the bridge, which is reached without TLS.
+ * Returns what http_stream_start returned. */
+static int start_with_token(harness_t *h, const char *host, const char *token, bool plain) {
     static const ollama_message_t messages[1] = {{"user", "hi"}};
     http_stream_request_t request;
 
@@ -1017,8 +1018,8 @@ static int start_with_token(harness_t *h, const char *host, const char *api_toke
     request.method = "POST";
     request.path = "/api/chat";
     request.content_type = "application/json";
-    /* The bridge's token: sent in clear, so this field alone needs no TLS. */
-    request.api_token = api_token;
+    request.bearer_token = token;
+    request.allow_plain_token = plain;
     request.body = ollama_provider_request(&h->provider);
     request.sink.feed = sink_feed;
     request.sink.finish = sink_finish;
@@ -1061,16 +1062,6 @@ static void check_bearer_token_header(void) {
         "\r\n"
         "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
         "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}";
-    static const char punctuation[] =
-        "POST /api/chat HTTP/1.1\r\n"
-        "Host: 192.168.1.20:8765\r\n"
-        "Authorization: Bearer %s%%n!#$&'*+-.^_`|~:/=\r\n"
-        "Content-Type: application/json\r\n"
-        "Content-Length: 118\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
-        "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}";
     static const char *const unsafe[] = {
         "two words", " lead", "trail ", "tab\tbed", "a\rb", "a\nb",
         "a\r\nX-Evil: 1", "caf\xc3\xa9", "del\x7f", "\x01",
@@ -1081,28 +1072,36 @@ static void check_bearer_token_header(void) {
     size_t i;
 
     CHECK(start_with_token(h, "192.168.1.20",
-                           "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == 0);
+                           "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true) == 0);
     CHECK(wire_is(h, with_token));
     http_stream_cancel(&h->stream);
 
     /* NULL leaves the request exactly as it was before tokens; an empty string
      * is not a token and is refused, so the caller passes one or the other. */
-    CHECK(start_with_token(h, "192.168.1.20", NULL) == 0);
+    CHECK(start_with_token(h, "192.168.1.20", NULL, true) == 0);
     CHECK(wire_is(h, without_token));
     CHECK(!wire_has(h, "Authorization"));
     http_stream_cancel(&h->stream);
-    CHECK(start_with_token(h, "192.168.1.20", "") == -1);
+    CHECK(start_with_token(h, "192.168.1.20", "", true) == -1);
     CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
     CHECK(h->net.wire_length == 0u);
 
-    /* Format directives in a token are data, not a format. */
-    CHECK(start_with_token(h, "192.168.1.20", "%s%%n!#$&'*+-.^_`|~:/=") == 0);
-    CHECK(wire_is(h, punctuation));
-    http_stream_cancel(&h->stream);
+    /* A token that is not a bearer token is refused before any I/O: it could
+     * not be sent as one, and it could not inject a header either. */
+    CHECK(start_with_token(h, "192.168.1.20", "%s%%n!#$&'*+-.^_`|~:/=", true) == -1);
+    CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
+    CHECK(h->net.wire_length == 0u);
+
+    /* The token may travel in clear only to the bridge, which is the one host
+     * that needs no TLS: without that flag the request is refused instead of
+     * being put on the wire in the open. */
+    CHECK(start_with_token(h, "192.168.1.20", "0123456789abcdef", false) == -1);
+    CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
+    CHECK(h->net.wire_length == 0u);
 
     /* A token that could split or pad the header is refused before any I/O. */
     for (i = 0u; i < sizeof(unsafe) / sizeof(unsafe[0]); i++) {
-        CHECK(start_with_token(h, "192.168.1.20", unsafe[i]) == -1);
+        CHECK(start_with_token(h, "192.168.1.20", unsafe[i], true) == -1);
         CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
         CHECK(h->net.dns_calls == 0);
         CHECK(h->net.wire_length == 0u);
@@ -1114,7 +1113,7 @@ static void check_bearer_token_header(void) {
     host[sizeof(host) - 1u] = '\0';
     memset(token, 'k', sizeof(token) - 1u);
     token[sizeof(token) - 1u] = '\0';
-    CHECK(start_with_token(h, host, token) == 0);
+    CHECK(start_with_token(h, host, token, true) == 0);
     CHECK(h->net.wire_length > 253u + 127u + 118u);
     CHECK(memcmp(h->net.wire + h->net.wire_length - 118u, REQUEST_BODY, 118u) == 0);
     http_stream_cancel(&h->stream);

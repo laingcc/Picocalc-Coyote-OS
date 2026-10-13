@@ -192,8 +192,8 @@ void reset_usb_boot(uint32_t gpio_activity_pin_mask, uint32_t disable_interface_
 /* ---- Tests --------------------------------------------------------------- */
 
 /* Rows of the Connection settings list, top to bottom. */
-enum { ROW_HOST = 2, ROW_PORT = 3, ROW_API_TOKEN = 4, ROW_PASSWORD = 6, ROW_SYSTEM_PROMPT = 11,
-       ROW_TEMPERATURE = 12, ROW_UTC_OFFSET = 13, ROW_API_KEY = 14, ROW_APPLY = 15 };
+enum { ROW_HOST = 2, ROW_PORT = 3, ROW_PASSWORD = 5, ROW_SYSTEM_PROMPT = 10, ROW_TEMPERATURE = 11,
+       ROW_UTC_OFFSET = 12, ROW_API_KEY = 13, ROW_APPLY = 14 };
 
 /* HOME, then down to Connection settings from wherever the menu starts
  * (it starts on the current mode: Text, Calculator, Chat). */
@@ -245,7 +245,6 @@ static void check_apply_from_calculator(void) {
     CHECK(shows(snapshots[1], " Model: (none) "));
     CHECK(shows(snapshots[1], " Host: (none) "));
     CHECK(shows(snapshots[1], " Port: 11434 "));
-    CHECK(shows(snapshots[1], " API token: (none) "));
     CHECK(shows(snapshots[1], " SSID: (none) "));
     CHECK(shows(snapshots[1], " Password: (none) "));
     CHECK(shows(snapshots[1], " Connect ms: 15000 "));
@@ -445,7 +444,7 @@ static void check_deepseek_setup(void) {
     script_begin();
     press(KEY_DOWN); press(KEY_ENTER);  /* F5 > Provider */
     press(SNAP);
-    press(KEY_DOWN); press(KEY_ENTER);  /* deepseek */
+    press_times(KEY_DOWN, 2); press(KEY_ENTER);  /* past ollama and muse: deepseek */
     press(SNAP);
     press(KEY_DOWN); press(KEY_ENTER);  /* Connection settings */
     press_times(KEY_DOWN, ROW_API_KEY); press(KEY_ENTER);
@@ -557,53 +556,40 @@ static void check_usb_disk_row(void) {
     CHECK(ui_get_current_mode() == MODE_CALCULATOR);
 }
 
-/* The API token is warned about before it is typed, masked in the list
- * afterwards, and reaches the services and the saved file unchanged. */
-static void check_api_token_is_warned_and_masked(void) {
-    int configured_before = configure_calls, saved_before = save_calls;
+/* Muse is picked like any other provider and brings the bridge's port and its
+ * one model.  The key it then takes is the single credential setting the cloud
+ * providers use too, so there is nothing extra to fill in for a bridge. */
+static void check_muse_provider_setup(void) {
+    int before_configure = configure_calls, before_save = save_calls;
 
     script_begin();
     open_settings_from(MODE_CHAT);
-    press_times(KEY_DOWN, ROW_API_TOKEN); press(KEY_ENTER);
-    press(SNAP);
-    press(KEY_ENTER); /* dismiss the notice */
-    press('0'); press('f'); press('1'); press(SNAP);
-    type_line("e2d3c4b5a69788796a5b4c3d2e1f0");
-    press(SNAP);
-    press_times(KEY_DOWN, ROW_APPLY - ROW_API_TOKEN); press(KEY_ENTER);
+    press(KEY_ENTER);                   /* Provider: the first row */
+    press(SNAP);                        /* the list, with Muse in it */
+    /* Up to the top of the list, then one down to muse: the cursor starts on
+     * whichever provider is in force. */
+    press_times(KEY_UP, 4); press(KEY_DOWN); press(KEY_ENTER);
+    press(SNAP);                        /* where Host goes */
+    press(KEY_ENTER);                   /* dismiss it */
+    press(SNAP);                        /* the settings, now on muse */
+    press_times(KEY_DOWN, ROW_APPLY); press(KEY_ENTER);   /* Apply & connect */
     ui_show_mode_menu();
 
     CHECK(script_consumed());
     CHECK(snapshot_count == 3);
-    CHECK(shows(snapshots[0], " API TOKEN "));
-    CHECK(shows(snapshots[0], " Saved as plain text on SD "));
-    CHECK(shows(snapshots[1], "***"));
-    CHECK(!shows(snapshots[1], "0f1"));
-    CHECK(shows(snapshots[2], " API token: ******** "));
-    CHECK(!shows(snapshots[2], "0f1e2d3c"));
-    CHECK(!shows(screen, "0f1e2d3c"));
-    CHECK(configure_calls == configured_before + 1);
-    CHECK(save_calls == saved_before + 1);
-    CHECK(strcmp(configured.api_token, "0f1e2d3c4b5a69788796a5b4c3d2e1f0") == 0);
-    CHECK(strcmp(saved.api_token, "0f1e2d3c4b5a69788796a5b4c3d2e1f0") == 0);
-
-    /* A token with a blank in it is refused and the old one is kept. */
-    script_begin();
-    open_settings_from(MODE_CHAT);
-    press_times(KEY_DOWN, ROW_API_TOKEN); press(KEY_ENTER);
-    press(KEY_ENTER);
-    type_line("two words");
-    press(SNAP);
-    press(KEY_ENTER); /* dismiss the rejection */
-    press(KEY_ESC);
-    ui_show_mode_menu();
-
-    CHECK(script_consumed());
-    CHECK(snapshot_count == 1);
-    CHECK(shows(snapshots[0], " NOT CHANGED "));
-    CHECK(shows(snapshots[0], " Not a valid value "));
-    CHECK(configure_calls == configured_before + 1);
-    CHECK(strcmp(configured.api_token, "0f1e2d3c4b5a69788796a5b4c3d2e1f0") == 0);
+    CHECK(shows(snapshots[0], " PROVIDER "));
+    CHECK(shows(snapshots[0], " ollama "));
+    CHECK(shows(snapshots[0], " muse "));
+    CHECK(shows(snapshots[1], " MUSE BRIDGE "));
+    CHECK(shows(snapshots[1], " Host: the bridge machine "));
+    CHECK(shows(snapshots[2], " Provider: muse "));
+    CHECK(shows(snapshots[2], " Port: 8765 "));
+    CHECK(shows(snapshots[2], " Model: muse "));
+    CHECK(configure_calls == before_configure + 1);
+    CHECK(save_calls == before_save + 1);
+    CHECK_STR_EQ(configured.provider, "muse");
+    CHECK(configured.port == 8765u);
+    CHECK_STR_EQ(configured.model, "muse");
 }
 
 void test_mode_menu(void) {
@@ -621,5 +607,5 @@ void test_mode_menu(void) {
     check_apply_cancels_a_streaming_reply();
     check_deepseek_setup();
     check_usb_disk_row();
-    check_api_token_is_warned_and_masked();
+    check_muse_provider_setup();
 }

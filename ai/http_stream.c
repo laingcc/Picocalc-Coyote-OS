@@ -188,8 +188,7 @@ static bool is_header_name(const char *text) {
 /*
  * Whether the request's credential, if it has one, may be sent: only one of
  * them, in a form that cannot break out of its header, and over TLS - except
- * the bridge's token, which belongs to a host on the LAN and travels in clear
- * because the bridge speaks plain HTTP.
+ * the token sent to the bridge, which is on this LAN and speaks plain HTTP.
  */
 static bool credential_valid(const http_stream_request_t *request) {
     if ((request->api_key == NULL) != (request->api_key_header == NULL)) {
@@ -198,13 +197,9 @@ static bool credential_valid(const http_stream_request_t *request) {
     if (request->bearer_token != NULL && request->api_key != NULL) {
         return false;
     }
-    if (request->api_token != NULL &&
-        (request->bearer_token != NULL || request->api_key != NULL ||
-         !ai_config_api_token_valid(request->api_token))) {
-        return false;
-    }
     if (request->bearer_token != NULL &&
-        (!request->tls || !ai_config_bearer_token_valid(request->bearer_token))) {
+        ((!request->tls && !request->allow_plain_token) ||
+         !ai_config_bearer_token_valid(request->bearer_token))) {
         return false;
     }
     if (request->api_key != NULL &&
@@ -269,11 +264,6 @@ int http_stream_start(http_stream_t *stream, const http_stream_request_t *reques
         credential_name = request->api_key_header;
         credential_separator = ": ";
         credential = request->api_key;
-    } else if (request->api_token != NULL) {
-        /* The bridge speaks plain HTTP on the LAN, so its one token is the
-         * only credential allowed to travel unencrypted. */
-        credential_name = "Authorization: Bearer ";
-        credential = request->api_token;
     }
 
     port_text[0] = '\0';

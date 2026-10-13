@@ -330,9 +330,9 @@ static void explain_rejection(chat_setting_t field, ai_config_status_t status) {
 }
 
 /* Prompt for one field and store it in target if it validates.  Every field,
- * the Wi-Fi password included, is shown as it is typed, except the API key and
- * the bridge's API token, which are echoed as asterisks; the typed value is
- * wiped afterwards because it may be a secret. */
+ * the Wi-Fi password included, is shown as it is typed, except the API key -
+ * which is also the bridge's token - and the typed value is wiped afterwards
+ * because it may be a secret. */
 static bool edit_setting(ai_config_t *target, chat_setting_t field) {
     char value[UI_INPUT_MAX + 1], title[24];
     unsigned flags = UI_INPUT_ANY_CHAR;
@@ -341,9 +341,9 @@ static bool edit_setting(ai_config_t *target, chat_setting_t field) {
     bool stored_key;
 
     if (chat_settings_allows_empty(field)) flags |= UI_INPUT_ALLOW_EMPTY;
-    /* The Wi-Fi password is typed visibly, so a mistyped one can be seen; a
-     * key or a token is not. */
-    if (field == CHAT_SETTING_API_KEY || field == CHAT_SETTING_API_TOKEN) flags |= UI_INPUT_MASKED;
+    /* The Wi-Fi password is typed visibly, so a mistyped one can be seen; the
+     * key - or the bridge token, which shares this field - is not. */
+    if (field == CHAT_SETTING_API_KEY) flags |= UI_INPUT_MASKED;
     snprintf(title, sizeof(title), " %s ", chat_settings_label(field));
     if (!ui_show_input_dialog(title, value, sizeof(value), flags)) { memset(value, 0, sizeof(value)); return false; }
     status = chat_settings_set(target, field, value);
@@ -410,11 +410,12 @@ static void ssid_menu(ai_config_t *target) {
  * moves the host, port and model to the new provider's own, and drops the API
  * key of a cloud provider being left (see ai_config_set_provider). */
 static bool pick_provider(ai_config_t *target) {
-    const char *labels[1 + AI_CONFIG_CLOUD_MAX], *names[1 + AI_CONFIG_CLOUD_MAX];
-    int count = 1 + (int)ai_config_cloud_count(), current = 0, sel;
+    const char *labels[2 + AI_CONFIG_CLOUD_MAX], *names[2 + AI_CONFIG_CLOUD_MAX];
+    int count = 2 + (int)ai_config_cloud_count(), current = 0, sel;
 
     names[0] = AI_CONFIG_PROVIDER_OLLAMA;
-    for (int i = 1; i < count; i++) names[i] = ai_config_cloud_at((size_t)i - 1)->name;
+    names[1] = AI_CONFIG_PROVIDER_MUSE;
+    for (int i = 2; i < count; i++) names[i] = ai_config_cloud_at((size_t)i - 2)->name;
     for (int i = 0; i < count; i++) {
         snprintf(choice_labels[i], sizeof(choice_labels[i]), " %s ", names[i]);
         labels[i] = choice_labels[i];
@@ -422,7 +423,12 @@ static bool pick_provider(ai_config_t *target) {
     }
     sel = menu(" PROVIDER ", labels, count, current);
     if (sel < 0 || strcmp(target->provider, names[sel]) == 0) return false;
-    return chat_settings_set(target, CHAT_SETTING_PROVIDER, names[sel]) == AI_CONFIG_OK;
+    if (chat_settings_set(target, CHAT_SETTING_PROVIDER, names[sel]) != AI_CONFIG_OK) return false;
+    if (strcmp(names[sel], AI_CONFIG_PROVIDER_MUSE) == 0) {
+        /* The bridge is a machine on this LAN, so Host is still to be filled. */
+        notice(" MUSE BRIDGE ", " Host: the bridge machine ");
+    }
+    return true;
 }
 
 /* A cloud provider only has the models it lists, so they are picked, not typed. */
@@ -458,11 +464,6 @@ static void settings_menu(void) {
         if (sel == CHAT_SETTING_PROVIDER) pick_provider(&draft);
         else if (sel == CHAT_SETTING_MODEL && ai_config_cloud(&draft) != NULL) pick_cloud_model(&draft);
         else if (sel == CHAT_SETTING_SSID) ssid_menu(&draft);
-        else if (sel == CHAT_SETTING_API_TOKEN) {
-            /* Anyone holding the card can read it: say so before it is typed. */
-            notice(" API TOKEN ", " Saved as plain text on SD ");
-            edit_setting(&draft, CHAT_SETTING_API_TOKEN);
-        }
         else edit_setting(&draft, (chat_setting_t)sel);
     }
     memset(&draft, 0, sizeof(draft));
