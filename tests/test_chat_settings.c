@@ -50,7 +50,7 @@ static void check_text_fields(void) {
     /* Rejections leave the old value in place. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.host, "192.168.1.20");
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+    /* Muse is a provider of its own now; an unknown name is still refused. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.provider, "ollama");
     CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, " padded") == AI_CONFIG_INVALID_VALUE);
@@ -318,8 +318,12 @@ static void check_deepseek_provider(void) {
     CHECK_STR_EQ(config.ssid, "Home Net");
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
     CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_OK);
-    /* Muse is still not selectable here, as before. */
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+    /* Muse is selectable: the bridge speaks Ollama's protocol, with its own
+     * port and its one model. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "muse");
+    CHECK(config.port == 8765u);
+    CHECK_STR_EQ(config.model, "muse");
 }
 
 static void check_api_key_is_never_shown(void) {
@@ -370,14 +374,47 @@ static void check_api_key_is_never_shown(void) {
     CHECK_STR_EQ(config.bearer_token, "");
 }
 
+/* A key given to a provider is still there when that provider is chosen again,
+ * and is never the one in force for a provider it was not given to. */
+static void check_key_survives_a_provider_switch(void) {
+    ai_config_t config;
+    char out[160];
+    char mask[16];
+
+    ai_config_init(&config);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "0123456789abcdef") == AI_CONFIG_OK);
+
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "fedcba9876543210") == AI_CONFIG_OK);
+
+    /* Back to muse: its own key is in force again, shown masked as if typed. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "0123456789abcdef");
+    CHECK(chat_settings_format(&config, CHAT_SETTING_API_KEY, out, sizeof(out)) == 8u);
+    memset(mask, '*', 8u);
+    mask[8] = '\0';
+    CHECK_STR_EQ(out, mask);
+
+    /* Clearing it clears what was remembered, so it cannot come back. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "fedcba9876543210");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+}
+
 void test_chat_settings(void) {
     check_labels();
     check_text_fields();
     check_numeric_bounds();
     check_utc_offset();
     check_password_is_never_shown();
+    check_api_key_is_never_shown();
     check_arguments_and_truncation();
     check_temperature();
     check_deepseek_provider();
-    check_api_key_is_never_shown();
+    check_key_survives_a_provider_switch();
 }

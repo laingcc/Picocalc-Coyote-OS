@@ -195,9 +195,13 @@ void reset_usb_boot(uint32_t gpio_activity_pin_mask, uint32_t disable_interface_
 enum { ROW_HOST = 2, ROW_PORT = 3, ROW_PASSWORD = 5, ROW_SYSTEM_PROMPT = 10, ROW_TEMPERATURE = 11,
        ROW_UTC_OFFSET = 12, ROW_API_KEY = 13, ROW_APPLY = 14 };
 
-/* HOME, then down to Connection settings from wherever the menu starts
- * (it starts on the current mode: Text, Calculator, Chat). */
+/* HOME, then down to Connection settings.  The mode menu opens on the mode in
+ * force, so the mode is set here rather than left to whatever the previous
+ * check happened to finish on. */
 static void open_settings_from(app_mode_t mode) {
+    if (ui_get_current_mode() != mode) {
+        ui_set_current_mode(mode);
+    }
     press_times(KEY_DOWN, mode == MODE_TEXT ? 3 : mode == MODE_CALCULATOR ? 2 : 1);
     press(KEY_ENTER);
 }
@@ -444,7 +448,7 @@ static void check_deepseek_setup(void) {
     script_begin();
     press(KEY_DOWN); press(KEY_ENTER);  /* F5 > Provider */
     press(SNAP);
-    press(KEY_DOWN); press(KEY_ENTER);  /* deepseek */
+    press_times(KEY_DOWN, 2); press(KEY_ENTER);  /* past ollama and muse: deepseek */
     press(SNAP);
     press(KEY_DOWN); press(KEY_ENTER);  /* Connection settings */
     press_times(KEY_DOWN, ROW_API_KEY); press(KEY_ENTER);
@@ -556,6 +560,42 @@ static void check_usb_disk_row(void) {
     CHECK(ui_get_current_mode() == MODE_CALCULATOR);
 }
 
+/* Muse is picked like any other provider and brings the bridge's port and its
+ * one model.  The key it then takes is the single credential setting the cloud
+ * providers use too, so there is nothing extra to fill in for a bridge. */
+static void check_muse_provider_setup(void) {
+    int before_configure = configure_calls, before_save = save_calls;
+
+    script_begin();
+    open_settings_from(MODE_CHAT);
+    press(KEY_ENTER);                   /* Provider: the first row */
+    press(SNAP);                        /* the list, with Muse in it */
+    /* Up to the top of the list, then one down to muse: the cursor starts on
+     * whichever provider is in force. */
+    press_times(KEY_UP, 4); press(KEY_DOWN); press(KEY_ENTER);
+    press(SNAP);                        /* where Host goes */
+    press(KEY_ENTER);                   /* dismiss it */
+    press(SNAP);                        /* the settings, now on muse */
+    press_times(KEY_DOWN, ROW_APPLY); press(KEY_ENTER);   /* Apply & connect */
+    ui_show_mode_menu();
+
+    CHECK(script_consumed());
+    CHECK(snapshot_count == 3);
+    CHECK(shows(snapshots[0], " PROVIDER "));
+    CHECK(shows(snapshots[0], " ollama "));
+    CHECK(shows(snapshots[0], " muse "));
+    CHECK(shows(snapshots[1], " MUSE BRIDGE "));
+    CHECK(shows(snapshots[1], " Host: the bridge machine "));
+    CHECK(shows(snapshots[2], " Provider: muse "));
+    CHECK(shows(snapshots[2], " Port: 8765 "));
+    CHECK(shows(snapshots[2], " Model: muse "));
+    CHECK(configure_calls == before_configure + 1);
+    CHECK(save_calls == before_save + 1);
+    CHECK_STR_EQ(configured.provider, "muse");
+    CHECK(configured.port == 8765u);
+    CHECK_STR_EQ(configured.model, "muse");
+}
+
 void test_mode_menu(void) {
     ui_init();
     chat_mode_init();
@@ -571,4 +611,5 @@ void test_mode_menu(void) {
     check_apply_cancels_a_streaming_reply();
     check_deepseek_setup();
     check_usb_disk_row();
+    check_muse_provider_setup();
 }

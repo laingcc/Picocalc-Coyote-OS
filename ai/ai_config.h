@@ -13,6 +13,9 @@
 #define AI_CONFIG_HOST_CAPACITY 254u
 #define AI_CONFIG_MODEL_CAPACITY 129u
 #define AI_CONFIG_BEARER_TOKEN_CAPACITY 257u
+/* Providers that can keep a key of their own - ollama, muse, and the clouds.
+ * A key is remembered per provider, so switching providers does not lose it. */
+#define AI_CONFIG_KEY_SLOT_COUNT 7u
 #define AI_CONFIG_KEY_CAPACITY 32u
 #define AI_CONFIG_LINE_MAX 512u
 
@@ -43,6 +46,10 @@
 #define AI_CONFIG_PROVIDER_GEMINI "gemini"
 #define AI_CONFIG_PROVIDER_CLAUDE "claude"
 #define AI_CONFIG_OLLAMA_PORT 11434u
+/* The Muse bridge answers Ollama's protocol on the port it is given, with one
+ * model, which is what picking Muse fills in. */
+#define AI_CONFIG_MUSE_PORT 8765u
+#define AI_CONFIG_MUSE_MODEL "muse"
 
 /*
  * The cloud providers ("deepseek", "openai", "mistral", "gemini", "claude")
@@ -104,6 +111,11 @@ typedef struct {
     char system_prompt[AI_CONFIG_SYSTEM_PROMPT_CAPACITY];
     uint16_t temperature;
     int16_t utc_offset_minutes; /* local time is UTC plus this */
+    /* The key each provider was last given, so switching providers does not
+     * mean typing it again.  The key of the provider in force is
+     * bearer_token, and its slot mirrors that; a remembered key is only ever
+     * offered to the provider it was typed for. */
+    char provider_keys[AI_CONFIG_KEY_SLOT_COUNT][AI_CONFIG_BEARER_TOKEN_CAPACITY];
 } ai_config_t;
 
 typedef struct {
@@ -111,6 +123,7 @@ typedef struct {
     char line[AI_CONFIG_LINE_MAX + 1u];
     size_t line_length;
     uint16_t seen_keys;
+    unsigned char seen_slots; /* one bit per ai_config_key_slot */
     ai_config_status_t status;
     char error_key[AI_CONFIG_KEY_CAPACITY];
     unsigned char pending_cr;
@@ -136,6 +149,13 @@ int ai_config_cloud_model_known(const ai_config_cloud_t *cloud, const char *mode
  * trailing "="): the only text that may follow "Authorization: Bearer ".  The
  * same rule is applied to a key sent in a header of its own. */
 int ai_config_bearer_token_valid(const char *token);
+
+/* The slot that remembers a provider's key: 0 for ollama, 1 for muse, then the
+ * cloud providers in table order - or -1 for a name that is not a provider. */
+int ai_config_key_slot(const char *provider);
+
+/* The provider a slot belongs to, or NULL when slot is out of range. */
+const char *ai_config_key_slot_name(size_t slot);
 
 /*
  * Check the rules that span fields.  A cloud provider's configuration must

@@ -718,6 +718,11 @@ int app_services_chat_start(const ollama_message_t *messages,
     request.method = ollama_provider_method();
     request.path = ollama_provider_path();
     request.content_type = ollama_provider_content_type();
+    /* The key or bridge token, if one is set; empty leaves the request as it
+     * was.  This host is the user's own - a plain Ollama or the Muse bridge -
+     * so the token is allowed to travel without TLS. */
+    request.bearer_token = services.config.bearer_token[0] != '\0' ? services.config.bearer_token : NULL;
+    request.allow_plain_token = true;
     request.body = ollama_provider_request(&services.provider);
     request.sink.feed = sink_feed;
     request.sink.finish = sink_finish;

@@ -1001,6 +1001,169 @@ static void check_start_validation_and_reuse(void) {
     }
 }
 
+/* Start a request carrying a token and run it until the request is on the
+ * wire; plain says the host is the bridge, which is reached without TLS.
+ * Returns what http_stream_start returned. */
+static int start_with_token(harness_t *h, const char *host, const char *token, bool plain) {
+    static const ollama_message_t messages[1] = {{"user", "hi"}};
+    http_stream_request_t request;
+
+    harness_reset(h);
+    clear_events(h);
+    ollama_provider_init(&h->provider, on_event, h);
+    CHECK(ollama_provider_build_request(&h->provider, "m", messages, 1, 8, "", 80) == 0);
+    memset(&request, 0, sizeof(request));
+    request.host = host;
+    request.port = 8765u;
+    request.method = "POST";
+    request.path = "/api/chat";
+    request.content_type = "application/json";
+    request.bearer_token = token;
+    request.allow_plain_token = plain;
+    request.body = ollama_provider_request(&h->provider);
+    request.sink.feed = sink_feed;
+    request.sink.finish = sink_finish;
+    request.sink.context = &h->provider;
+    if (http_stream_start(&h->stream, &request) != 0) {
+        return -1;
+    }
+    http_stream_on_dns(&h->stream, true);
+    http_stream_on_connected(&h->stream, true);
+    return 0;
+}
+
+static bool wire_is(const harness_t *h, const char *expected) {
+    return h->net.wire_length == strlen(expected) && memcmp(h->net.wire, expected, strlen(expected)) == 0;
+}
+
+static bool wire_has(harness_t *h, const char *text) {
+    h->net.wire[h->net.wire_length < FAKE_WIRE_MAX ? h->net.wire_length : FAKE_WIRE_MAX - 1u] = '\0';
+    return strstr(h->net.wire, text) != NULL;
+}
+
+static void check_bearer_token_header(void) {
+    /* Every byte of the request, written out by hand. */
+    static const char with_token[] =
+        "POST /api/chat HTTP/1.1\r\n"
+        "Host: 192.168.1.20:8765\r\n"
+        "Authorization: Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: 118\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+        "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}";
+    static const char without_token[] =
+        "POST /api/chat HTTP/1.1\r\n"
+        "Host: 192.168.1.20:8765\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: 118\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+        "\"stream\":true,\"options\":{\"num_predict\":8,\"temperature\":0.80}}";
+    static const char *const unsafe[] = {
+        "two words", " lead", "trail ", "tab\tbed", "a\rb", "a\nb",
+        "a\r\nX-Evil: 1", "caf\xc3\xa9", "del\x7f", "\x01",
+    };
+    harness_t *h = &g_harness;
+    char host[254];
+    char token[128];
+    size_t i;
+
+    CHECK(start_with_token(h, "192.168.1.20",
+                           "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true) == 0);
+    CHECK(wire_is(h, with_token));
+    http_stream_cancel(&h->stream);
+
+    /* NULL leaves the request exactly as it was before tokens; an empty string
+     * is not a token and is refused, so the caller passes one or the other. */
+    CHECK(start_with_token(h, "192.168.1.20", NULL, true) == 0);
+    CHECK(wire_is(h, without_token));
+    CHECK(!wire_has(h, "Authorization"));
+    http_stream_cancel(&h->stream);
+    CHECK(start_with_token(h, "192.168.1.20", "", true) == -1);
+    CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
+    CHECK(h->net.wire_length == 0u);
+
+    /* A token that is not a bearer token is refused before any I/O: it could
+     * not be sent as one, and it could not inject a header either. */
+    CHECK(start_with_token(h, "192.168.1.20", "%s%%n!#$&'*+-.^_`|~:/=", true) == -1);
+    CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
+    CHECK(h->net.wire_length == 0u);
+
+    /* The token may travel in clear only to the bridge, which is the one host
+     * that needs no TLS: without that flag the request is refused instead of
+     * being put on the wire in the open. */
+    CHECK(start_with_token(h, "192.168.1.20", "0123456789abcdef", false) == -1);
+    CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
+    CHECK(h->net.wire_length == 0u);
+
+    /* A token that could split or pad the header is refused before any I/O. */
+    for (i = 0u; i < sizeof(unsafe) / sizeof(unsafe[0]); i++) {
+        CHECK(start_with_token(h, "192.168.1.20", unsafe[i], true) == -1);
+        CHECK(http_stream_state(&h->stream) == HTTP_STREAM_IDLE);
+        CHECK(h->net.dns_calls == 0);
+        CHECK(h->net.wire_length == 0u);
+    }
+
+    /* The longest host and the longest token the configuration can hold
+     * still fit the request head together. */
+    memset(host, 'h', sizeof(host) - 1u);
+    host[sizeof(host) - 1u] = '\0';
+    memset(token, 'k', sizeof(token) - 1u);
+    token[sizeof(token) - 1u] = '\0';
+    CHECK(start_with_token(h, host, token, true) == 0);
+    CHECK(h->net.wire_length > 253u + 127u + 118u);
+    CHECK(memcmp(h->net.wire + h->net.wire_length - 118u, REQUEST_BODY, 118u) == 0);
+    http_stream_cancel(&h->stream);
+}
+
+/* What tools/muse_bridge writes for POST /api/chat, byte for byte: chunked,
+ * empty-content heartbeats while Muse thinks, then either a bare
+ * {"done":true} or one error record. */
+#define MUSE_BRIDGE_HEAD                          \
+    "HTTP/1.1 200 OK\r\n"                         \
+    "Content-Type: application/x-ndjson\r\n"      \
+    "Cache-Control: no-store\r\n"                 \
+    "X-Content-Type-Options: nosniff\r\n"         \
+    "Transfer-Encoding: chunked\r\n"              \
+    "\r\n"
+#define MUSE_BRIDGE_HEARTBEAT "3b\r\n" "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":false}\n\r\n"
+
+static void check_muse_bridge_stream(void) {
+    harness_t *h = &g_harness;
+
+    harness_reset(h);
+    start_to_receiving(h);
+    recv_text(h, MUSE_BRIDGE_HEAD);
+    /* Heartbeats keep the idle timer from firing and add nothing to the reply. */
+    h->net.now += IDLE_TIMEOUT_MS - 1u;
+    recv_text(h, MUSE_BRIDGE_HEARTBEAT);
+    h->net.now += IDLE_TIMEOUT_MS - 1u;
+    http_stream_poll(&h->stream);
+    recv_text(h, MUSE_BRIDGE_HEARTBEAT);
+    h->net.now += IDLE_TIMEOUT_MS - 1u;
+    http_stream_poll(&h->stream);
+    CHECK(http_stream_state(&h->stream) == HTTP_STREAM_RECEIVING_BODY);
+    CHECK(h->event_count == 0);
+    recv_text(h, "3e\r\n" "{\"message\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"done\":false}\n\r\n");
+    recv_text(h, MUSE_BRIDGE_HEARTBEAT);
+    recv_text(h, "3d\r\n" "{\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":false}\n\r\n");
+    recv_text(h, "e\r\n" "{\"done\":true}\n\r\n" "0\r\n\r\n");
+    check_done_hello(h);
+
+    /* A reply Muse did not finish ends in an error record instead. */
+    start_to_receiving(h);
+    recv_text(h, MUSE_BRIDGE_HEAD);
+    recv_text(h, "3e\r\n" "{\"message\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"done\":false}\n\r\n");
+    recv_text(h, "2c\r\n" "{\"error\":\"Muse did not complete the reply\"}\n\r\n" "0\r\n\r\n");
+    check_failed(h, HTTP_STREAM_ERROR_SINK);
+    CHECK_STR_EQ(h->content, "Hel");
+    CHECK_STR_EQ(h->error_text, "Muse did not complete the reply");
+    CHECK(!ollama_provider_is_done(&h->provider));
+}
+
 /* A body whose read cancels the request: the stream must not write after. */
 typedef struct {
     http_stream_t *stream;
@@ -1418,6 +1581,8 @@ void test_http_stream(void) {
     check_http_error_status();
     check_early_response_while_sending();
     check_start_validation_and_reuse();
+    check_bearer_token_header();
+    check_muse_bridge_stream();
 
     check_wifi_needs_config();
     check_wifi_clear_credentials_powers_off();

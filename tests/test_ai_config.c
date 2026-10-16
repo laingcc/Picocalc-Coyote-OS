@@ -234,7 +234,8 @@ static void check_serializer_bounds_and_round_trip(void) {
     CHECK(parse_text(&config, &parser,
                      "ssid=wifi\npassword=hidden\nprovider=muse\nhost=muse.local\nport=443\n"
                      "model=chat\nbearer_token=opaque\nconnect_timeout_ms=500\n"
-                     "request_timeout_ms=1000\nidle_timeout_ms=100\nmax_predict=1\n", 7u) == AI_CONFIG_OK);
+                     "request_timeout_ms=1000\nidle_timeout_ms=100\nmax_predict=1\n"
+                     "utc_offset_minutes=0\n", 7u) == AI_CONFIG_OK);
     CHECK(ai_config_serialize(&config, NULL, 0u, &required) == AI_CONFIG_NO_SPACE);
     CHECK(required + 1u < sizeof(guarded));
     memset(guarded, 0xa5, sizeof(guarded));
@@ -395,6 +396,87 @@ static void check_deepseek_defaults(void) {
     CHECK(!ai_config_is_deepseek(NULL));
 }
 
+/* A key is remembered per provider, so switching away and back does not mean
+ * typing it again - and it is still only ever offered to its own host. */
+static void check_provider_keys_are_remembered(void) {
+    ai_config_t config;
+    ai_config_t again;
+    ai_config_parser_t parser;
+    int deepseek = ai_config_key_slot("deepseek");
+    int muse = ai_config_key_slot("muse");
+    char text[4096];
+    size_t length = 0u;
+
+    CHECK(ai_config_key_slot("ollama") == 0);
+    CHECK(muse == 1);
+    CHECK(deepseek == 2);
+    CHECK(ai_config_key_slot("claude") == (int)AI_CONFIG_KEY_SLOT_COUNT - 1);
+    CHECK(ai_config_key_slot("bedrock") == -1);
+    CHECK(ai_config_key_slot(NULL) == -1);
+    CHECK_STR_EQ(ai_config_key_slot_name(0u), "ollama");
+    CHECK_STR_EQ(ai_config_key_slot_name(1u), "muse");
+    CHECK_STR_EQ(ai_config_key_slot_name(2u), "deepseek");
+    CHECK(ai_config_key_slot_name(AI_CONFIG_KEY_SLOT_COUNT) == NULL);
+
+    ai_config_init(&config);
+    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
+    strcpy(config.host, "192.0.2.9");
+    strcpy(config.bearer_token, "0123456789abcdef");
+
+    /* Switching away puts the bridge's token under muse... */
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+    strcpy(config.bearer_token, "fedcba9876543210");
+
+    /* ...and switching back brings that token, not the cloud's. */
+    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "0123456789abcdef");
+
+    /* Both are written: the one in force as bearer_token, the other under the
+     * provider it belongs to. */
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
+    CHECK(strstr(text, "bearer_token=0123456789abcdef\n") != NULL);
+    CHECK(strstr(text, "key_deepseek=fedcba9876543210\n") != NULL);
+
+    ai_config_init(&again);
+    CHECK(parse_text(&again, &parser, text, 1u) == AI_CONFIG_OK);
+    CHECK_BYTES_EQ(&again, &config, sizeof(config));
+
+    /* A key is only ever written under its own provider's name. */
+    CHECK(parse_text(&again, &parser, text, 1u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(again.provider_keys[ai_config_key_slot("deepseek")], "fedcba9876543210");
+    CHECK_STR_EQ(again.provider_keys[ai_config_key_slot("muse")], "0123456789abcdef");
+
+    /* A file that names only the remembered key still puts it in force. */
+    CHECK(parse_text(&again, &parser,
+                     "provider=muse\nhost=192.0.2.9\nport=8765\nmodel=muse\n"
+                     "key_muse=abcdef0123456789\n",
+                     1u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(again.bearer_token, "abcdef0123456789");
+    CHECK(ai_config_validate(&again) == AI_CONFIG_OK);
+
+    /* A remembered key is held to the same rule as the one in force: it is only
+     * ever sent as a header value, wherever it is kept. */
+    CHECK(parse_text(&again, &parser,
+                     "provider=muse\nhost=192.0.2.9\nport=8765\nmodel=muse\n"
+                     "key_muse=not a token\n",
+                     1u) == AI_CONFIG_OK);
+    CHECK(ai_config_validate(&again) == AI_CONFIG_INVALID_VALUE);
+    CHECK(ai_config_serialize(&again, text, sizeof(text), &length) == AI_CONFIG_INVALID_VALUE);
+
+    /* Twice for the same provider is a duplicate key, as for any other line. */
+    CHECK(parse_text(&again, &parser, "provider=muse\nkey_muse=aaaaaaaa\nkey_muse=bbbbbbbb\n",
+                     1u) == AI_CONFIG_DUPLICATE_KEY);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "key_muse");
+
+    /* A name that is not a provider is ignored, like any other unknown line. */
+    CHECK(parse_text(&again, &parser, "provider=muse\nkey_bedrock=zzz\nkey_muse=a\n", 1u) ==
+          AI_CONFIG_OK);
+    CHECK_STR_EQ(again.bearer_token, "a");
+    CHECK(parse_text(&again, &parser, "provider=muse\nkey_muse=a\nkey_muse=\n", 1u) ==
+          AI_CONFIG_DUPLICATE_KEY);
+}
+
 static void check_deepseek_validation(void) {
     ai_config_t config;
     ai_config_parser_t parser;
@@ -460,20 +542,23 @@ static void check_set_provider(void) {
     ai_config_init(&config);
     strcpy(config.host, "wang.local");
     strcpy(config.model, "llama3.2:1b");
-    strcpy(config.bearer_token, "kept");
+    strcpy(config.bearer_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0");
     config.port = 8080u;
 
-    /* The same provider again changes nothing. */
+    /* The same provider again changes nothing, so its key stays. */
     CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
     CHECK_STR_EQ(config.host, "wang.local");
     CHECK(config.port == 8080u);
+    CHECK_STR_EQ(config.bearer_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0");
 
+    /* Changing provider always drops the key: it belonged to the old one, and
+     * no key is ever offered to a host it was not meant for. */
     CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
     CHECK_STR_EQ(config.provider, "deepseek");
     CHECK_STR_EQ(config.host, "api.deepseek.com");
     CHECK(config.port == 443u);
     CHECK_STR_EQ(config.model, "deepseek-chat");
-    CHECK_STR_EQ(config.bearer_token, "kept");
+    CHECK_STR_EQ(config.bearer_token, "");
     CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
 
     /* Leaving DeepSeek does not carry its endpoint to the next provider. */
@@ -483,9 +568,22 @@ static void check_set_provider(void) {
     CHECK(config.port == 11434u);
     CHECK_STR_EQ(config.model, "");
 
+    /* Muse brings the bridge's port and its one model; the host is the user's
+     * own machine, so it is left for them to fill in. */
+    strcpy(config.host, "192.0.2.9");
+    strcpy(config.model, "llama3.2:1b");
+    strcpy(config.bearer_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0");
+    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "muse");
+    CHECK_STR_EQ(config.host, "192.0.2.9");
+    CHECK(config.port == 8765u);
+    CHECK_STR_EQ(config.model, "muse");
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
+
     CHECK(ai_config_set_provider(&config, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK(ai_config_set_provider(&config, "") == AI_CONFIG_INVALID_VALUE);
-    CHECK_STR_EQ(config.provider, "ollama");
+    CHECK_STR_EQ(config.provider, "muse");
     CHECK(ai_config_set_provider(NULL, "ollama") == AI_CONFIG_INVALID_ARGUMENT);
     CHECK(ai_config_set_provider(&config, NULL) == AI_CONFIG_INVALID_ARGUMENT);
 }
@@ -505,4 +603,5 @@ void test_ai_config(void) {
     check_deepseek_defaults();
     check_deepseek_validation();
     check_set_provider();
+    check_provider_keys_are_remembered();
 }
