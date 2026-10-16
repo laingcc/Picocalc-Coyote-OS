@@ -195,9 +195,13 @@ void reset_usb_boot(uint32_t gpio_activity_pin_mask, uint32_t disable_interface_
 enum { ROW_HOST = 2, ROW_PORT = 3, ROW_PASSWORD = 5, ROW_SYSTEM_PROMPT = 10, ROW_TEMPERATURE = 11,
        ROW_UTC_OFFSET = 12, ROW_API_KEY = 13, ROW_APPLY = 14 };
 
-/* HOME, then down to Connection settings from wherever the menu starts
- * (it starts on the current mode: Text, Calculator, Chat). */
+/* HOME, then down to Connection settings.  The mode menu opens on the mode in
+ * force, so the mode is set here rather than left to whatever the previous
+ * check happened to finish on. */
 static void open_settings_from(app_mode_t mode) {
+    if (ui_get_current_mode() != mode) {
+        ui_set_current_mode(mode);
+    }
     press_times(KEY_DOWN, mode == MODE_TEXT ? 3 : mode == MODE_CALCULATOR ? 2 : 1);
     press(KEY_ENTER);
 }
