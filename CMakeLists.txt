@@ -18,7 +18,12 @@ add_subdirectory(pwm_sound)
 add_subdirectory(pico-vfs)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/rp2040-psram rp2040-psram)
 
-add_executable(coyote
+# The AI stack is most of the firmware but not all of it: the calculator, the
+# editor and the USB disk mode stand on their own.  With -DCOYOTE_NO_AI=ON the
+# chat sources are left out, which is what makes a build fit an RP2040.
+option(COYOTE_NO_AI "Build without the AI stack: calculator, editor and USB disk only" OFF)
+
+set(COYOTE_SOURCES
 	main.c
         UI/ui.c
         UI/chat_mode.c
@@ -57,6 +62,43 @@ add_executable(coyote
         usb/usb_msc.c
 )
 
+if (COYOTE_NO_AI)
+    list(REMOVE_ITEM COYOTE_SOURCES
+        UI/chat_mode.c
+        ai/ai_config.c
+        ai/config_store.c
+        ai/conv_store.c
+        ai/json_stream.c
+        ai/http_parser.c
+        ai/ollama_provider.c
+        ai/sse_provider.c
+        ai/openai_compat.c
+        ai/deepseek_provider.c
+        ai/claude_provider.c
+        ai/gemini_provider.c
+        ai/cloud_provider.c
+        ai/chat_model.c
+        ai/chat_request.c
+        ai/chat_settings.c
+        ai/chat_layout.c
+        ai/wifi_manager.c
+        ai/wifi_scan.c
+        ai/http_stream.c
+        ai/app_services.c
+        time/time_sync.c
+        time/time_service.c
+        storage/export.c
+    )
+    # The few entry points the rest of the firmware calls into, doing nothing.
+    list(APPEND COYOTE_SOURCES stubs/no_ai_stubs.c)
+endif()
+
+add_executable(coyote ${COYOTE_SOURCES})
+
+if (COYOTE_NO_AI)
+    target_compile_definitions(coyote PRIVATE COYOTE_NO_AI=1)
+endif()
+
 ##picocalc spi0
 target_compile_definitions(coyote PRIVATE
     PSRAM_MUTEX=1
@@ -80,6 +122,10 @@ target_link_libraries(coyote PRIVATE
     hardware_exception
 	hardware_pio
     pico_multicore
+    # The USB disk's serial number is the board's id.  The Wi-Fi libraries pull
+    # this in for their own reasons; a board without the radio does not, so it
+    # is asked for here.
+    pico_unique_id
 	i2ckbd
 	lcdspi
     rp2040-psram
