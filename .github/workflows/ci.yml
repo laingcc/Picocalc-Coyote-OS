@@ -57,5 +57,12 @@ jobs:
           cmake -S . -B build -DPICO_BOARD=pico2_w -DPICO_SDK_PATH=$GITHUB_WORKSPACE/pico-sdk -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j2
 
+      # The calculator, the editor and the USB disk mode have to keep building
+      # for a plain Pico, which is what the no-AI build is for.
+      - name: Build firmware for Pico without the AI
+        run: |
+          cmake -S . -B build-pico -DPICO_BOARD=pico -DCOYOTE_NO_AI=ON -DPICO_SDK_PATH=$GITHUB_WORKSPACE/pico-sdk -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pico -j2
+
       - name: Check firmware image
         run: ls -la build/coyote.uf2
