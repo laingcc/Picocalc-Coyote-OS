@@ -84,12 +84,15 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
 static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *from) {
     switch (field) {
         case CHAT_SETTING_PROVIDER:
-            /* Also moves the host, port and model to the provider's own, and
-             * drops a key that belonged to the cloud provider being left. */
+            /* Also moves the host, port and model to the provider's own.  Each
+             * provider keeps its own key, so the one being entered comes back
+             * with it. */
             ai_config_set_provider(config, from->provider);
             break;
         case CHAT_SETTING_API_KEY:
-            memcpy(config->bearer_token, from->bearer_token, sizeof(config->bearer_token));
+            /* The key belongs to the provider selected now, and is remembered
+             * for it. */
+            ai_config_set_provider_token(config, config->provider, from->bearer_token);
             break;
         case CHAT_SETTING_MODEL:
             memcpy(config->model, from->model, sizeof(config->model));
