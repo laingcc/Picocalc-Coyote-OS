@@ -1196,3 +1196,7 @@
 /build/pico_flash_region.ld
 /build/
 /build-tests/
+
+# Python bytecode from the search index tools
+__pycache__/
+*.pyc
