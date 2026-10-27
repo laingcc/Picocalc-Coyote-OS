@@ -19,14 +19,43 @@ enum {
     KEY_SYSTEM_PROMPT,
     KEY_TEMPERATURE,
     KEY_UTC_OFFSET,
+    /* One remembered key per provider; the order matches token_providers. */
+    KEY_BEARER_OLLAMA,
+    KEY_BEARER_MUSE,
+    KEY_BEARER_DEEPSEEK,
+    KEY_BEARER_OPENAI,
+    KEY_BEARER_MISTRAL,
+    KEY_BEARER_GEMINI,
+    KEY_BEARER_CLAUDE,
     KEY_UNKNOWN
 };
 
 static const char *const key_names[] = {
     "version", "ssid", "password", "provider", "host", "port", "model",
     "bearer_token", "connect_timeout_ms", "request_timeout_ms", "idle_timeout_ms",
-    "max_predict", "system_prompt", "temperature", "utc_offset_minutes"
+    "max_predict", "system_prompt", "temperature", "utc_offset_minutes",
+    "bearer_token_ollama", "bearer_token_muse", "bearer_token_deepseek",
+    "bearer_token_openai", "bearer_token_mistral", "bearer_token_gemini",
+    "bearer_token_claude"
 };
+
+_Static_assert(sizeof(key_names) / sizeof(key_names[0]) == (size_t)KEY_UNKNOWN,
+               "key_names is out of step with the key ids");
+_Static_assert((size_t)KEY_UNKNOWN <= 32u, "seen_keys cannot hold every key");
+
+/* The providers whose keys are remembered, in slot order.  This is also the
+ * order of the bearer_token_<provider> key ids, so the id minus
+ * KEY_BEARER_OLLAMA is the slot. */
+enum { TOKEN_SLOT_OLLAMA = 0, TOKEN_SLOT_MUSE = 1, TOKEN_SLOT_FIRST_CLOUD = 2 };
+
+static const char *const token_providers[] = {
+    AI_CONFIG_PROVIDER_OLLAMA, AI_CONFIG_PROVIDER_MUSE,  AI_CONFIG_PROVIDER_DEEPSEEK,
+    AI_CONFIG_PROVIDER_OPENAI, AI_CONFIG_PROVIDER_MISTRAL, AI_CONFIG_PROVIDER_GEMINI,
+    AI_CONFIG_PROVIDER_CLAUDE
+};
+
+_Static_assert(sizeof(token_providers) / sizeof(token_providers[0]) == AI_CONFIG_TOKEN_SLOTS,
+               "token_providers is out of step with AI_CONFIG_TOKEN_SLOTS");
 
 ai_config_status_t ai_config_init(ai_config_t *config) {
     if (config == NULL) {
@@ -153,6 +182,64 @@ int ai_config_bearer_token_valid(const char *token) {
     return i < AI_CONFIG_BEARER_TOKEN_CAPACITY;
 }
 
+size_t ai_config_token_slot(const char *provider) {
+    size_t i;
+
+    if (provider == NULL) {
+        return AI_CONFIG_TOKEN_SLOTS;
+    }
+    for (i = 0u; i < AI_CONFIG_TOKEN_SLOTS; i++) {
+        if (strcmp(token_providers[i], provider) == 0) {
+            return i;
+        }
+    }
+    return AI_CONFIG_TOKEN_SLOTS;
+}
+
+const char *ai_config_provider_token(const ai_config_t *config, const char *provider) {
+    size_t slot = ai_config_token_slot(provider);
+
+    if (config == NULL || slot == AI_CONFIG_TOKEN_SLOTS) {
+        return "";
+    }
+    return config->tokens[slot];
+}
+
+ai_config_status_t ai_config_set_provider_token(ai_config_t *config, const char *provider,
+                                                const char *token) {
+    size_t slot = ai_config_token_slot(provider);
+    size_t length;
+
+    if (config == NULL || token == NULL) {
+        return AI_CONFIG_INVALID_ARGUMENT;
+    }
+    if (slot == AI_CONFIG_TOKEN_SLOTS) {
+        return AI_CONFIG_INVALID_VALUE;
+    }
+    length = strlen(token);
+    if (length >= AI_CONFIG_BEARER_TOKEN_CAPACITY) {
+        return AI_CONFIG_VALUE_TOO_LONG;
+    }
+    /* Wipe first: a shorter key must not leave the tail of the old one. */
+    memset(config->tokens[slot], 0, sizeof(config->tokens[slot]));
+    memcpy(config->tokens[slot], token, length + 1u);
+    if (strcmp(config->provider, provider) == 0) {
+        memset(config->bearer_token, 0, sizeof(config->bearer_token));
+        memcpy(config->bearer_token, token, length + 1u);
+    }
+    return AI_CONFIG_OK;
+}
+
+/* Make the current provider's own key the live one. */
+static void load_active_token(ai_config_t *config) {
+    size_t slot = ai_config_token_slot(config->provider);
+
+    memset(config->bearer_token, 0, sizeof(config->bearer_token));
+    if (slot != AI_CONFIG_TOKEN_SLOTS) {
+        memcpy(config->bearer_token, config->tokens[slot], sizeof(config->bearer_token));
+    }
+}
+
 /* The field breaking a cross-field rule, or KEY_UNKNOWN if none does. */
 static int invalid_provider_field(const ai_config_t *config) {
     const ai_config_cloud_t *cloud = ai_config_cloud(config);
@@ -202,17 +289,21 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
         return AI_CONFIG_OK;
     }
     if (ai_config_cloud(config) != NULL) {
-        /* Nothing of the provider being left goes to the next one. */
+        /* Nothing of the endpoint being left goes to the next one. */
         memset(config->host, 0, sizeof(config->host));
         config->port = AI_CONFIG_OLLAMA_PORT;
         memset(config->model, 0, sizeof(config->model));
-        memset(config->bearer_token, 0, sizeof(config->bearer_token));
     }
+    /* The key stays with the provider it was entered for, and the provider
+     * being entered brings its own back: no key ever reaches a host it was not
+     * typed for, and none has to be retyped. */
+    ai_config_set_provider_token(config, config->provider, config->bearer_token);
     if (ai_config_cloud_find(provider) != NULL) {
         use_cloud_endpoint(config, ai_config_cloud_find(provider));
     }
     memset(config->provider, 0, sizeof(config->provider));
     memcpy(config->provider, provider, strlen(provider) + 1u);
+    load_active_token(config);
     return AI_CONFIG_OK;
 }
 
@@ -304,10 +395,10 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
     int32_t offset;
     ai_config_status_t status = AI_CONFIG_OK;
 
-    if ((parser->seen_keys & (uint16_t)(1u << (unsigned)id)) != 0u) {
+    if ((parser->seen_keys & (1u << (unsigned)id)) != 0u) {
         return fail(parser, AI_CONFIG_DUPLICATE_KEY, id);
     }
-    parser->seen_keys |= (uint16_t)(1u << (unsigned)id);
+    parser->seen_keys |= (1u << (unsigned)id);
 
     switch (id) {
         case KEY_VERSION:
@@ -342,8 +433,21 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
         case KEY_MODEL:
             return copy_value(parser, id, config->model, sizeof(config->model), value);
         case KEY_BEARER_TOKEN:
-            return copy_value(parser, id, config->bearer_token,
-                              sizeof(config->bearer_token), value);
+            /* The older single-key form.  The provider it belongs to may be
+             * named before or after this line, so hold it until the end. */
+            parser->pending_token_set = 1u;
+            return copy_value(parser, id, parser->pending_token,
+                              sizeof(parser->pending_token), value);
+        case KEY_BEARER_OLLAMA:
+        case KEY_BEARER_MUSE:
+        case KEY_BEARER_DEEPSEEK:
+        case KEY_BEARER_OPENAI:
+        case KEY_BEARER_MISTRAL:
+        case KEY_BEARER_GEMINI:
+        case KEY_BEARER_CLAUDE:
+            return copy_value(parser, id,
+                              config->tokens[(size_t)id - (size_t)KEY_BEARER_OLLAMA],
+                              AI_CONFIG_BEARER_TOKEN_CAPACITY, value);
         case KEY_CONNECT_TIMEOUT:
             return parse_u32(parser, id, value, AI_CONFIG_CONNECT_TIMEOUT_MS_MIN,
                              AI_CONFIG_CONNECT_TIMEOUT_MS_MAX, &config->connect_timeout_ms);
@@ -492,7 +596,7 @@ ai_config_status_t ai_config_parser_feed(ai_config_parser_t *parser, const void 
 }
 
 static int seen(const ai_config_parser_t *parser, int id) {
-    return (parser->seen_keys & (uint16_t)(1u << (unsigned)id)) != 0u;
+    return (parser->seen_keys & (1u << (unsigned)id)) != 0u;
 }
 
 /* Fill in what a cloud provider's file left out, then apply the cross-field
@@ -500,6 +604,7 @@ static int seen(const ai_config_parser_t *parser, int id) {
 static ai_config_status_t finish_provider(ai_config_parser_t *parser) {
     ai_config_t *config = parser->config;
     const ai_config_cloud_t *cloud = ai_config_cloud(config);
+    size_t slot;
     int id;
 
     if (cloud != NULL) {
@@ -513,8 +618,31 @@ static ai_config_status_t finish_provider(ai_config_parser_t *parser) {
             memcpy(config->model, cloud->models[0], strlen(cloud->models[0]) + 1u);
         }
     }
+    /* A legacy key belongs to the provider this file names; an explicit key for
+     * that provider's slot wins over it. */
+    slot = ai_config_token_slot(config->provider);
+    if (slot != AI_CONFIG_TOKEN_SLOTS && parser->pending_token_set != 0u &&
+        config->tokens[slot][0] == '\0') {
+        memcpy(config->tokens[slot], parser->pending_token, sizeof(config->tokens[slot]));
+    }
+    load_active_token(config);
+    /* The selected provider's key is reported by its own field name, so an
+     * older file that used "bearer_token" still points at that line. */
     id = invalid_provider_field(config);
-    return id == KEY_UNKNOWN ? AI_CONFIG_OK : fail(parser, AI_CONFIG_INVALID_VALUE, id);
+    if (id != KEY_UNKNOWN) {
+        return fail(parser, AI_CONFIG_INVALID_VALUE, id);
+    }
+    /* Every remembered cloud key must be usable as a header value, not only the
+     * one selected right now: switching to it must not discover a bad key. */
+    for (slot = TOKEN_SLOT_FIRST_CLOUD; slot < AI_CONFIG_TOKEN_SLOTS; slot++) {
+        if (slot == ai_config_token_slot(config->provider)) {
+            continue;
+        }
+        if (config->tokens[slot][0] != '\0' && !ai_config_bearer_token_valid(config->tokens[slot])) {
+            return fail(parser, AI_CONFIG_INVALID_VALUE, (int)KEY_BEARER_OLLAMA + (int)slot);
+        }
+    }
+    return AI_CONFIG_OK;
 }
 
 ai_config_status_t ai_config_parser_finish(ai_config_parser_t *parser) {
@@ -603,13 +731,50 @@ static uint32_t magnitude_of(int32_t number) {
     return number < 0 ? (uint32_t)-number : (uint32_t)number;
 }
 
+/* One "bearer_token_<provider>=<key>\n" per provider that has a key. */
+static size_t token_lines_length(const ai_config_t *config) {
+    size_t total = 0u;
+    size_t slot;
+
+    for (slot = 0u; slot < AI_CONFIG_TOKEN_SLOTS; slot++) {
+        if (config->tokens[slot][0] == '\0') {
+            continue;
+        }
+        total += sizeof("bearer_token_") - 1u + strlen(token_providers[slot]) + 1u +
+                 strlen(config->tokens[slot]) + 1u;
+    }
+    return total;
+}
+
+static void append_token_lines(char *destination, size_t *offset, const ai_config_t *config) {
+    size_t slot;
+
+    for (slot = 0u; slot < AI_CONFIG_TOKEN_SLOTS; slot++) {
+        if (config->tokens[slot][0] == '\0') {
+            continue;
+        }
+        append_text(destination, offset, "bearer_token_");
+        append_text(destination, offset, token_providers[slot]);
+        destination[(*offset)++] = '=';
+        append_text(destination, offset, config->tokens[slot]);
+        destination[(*offset)++] = '\n';
+    }
+}
+
 ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destination,
                                        size_t capacity, size_t *length) {
     size_t required;
     size_t offset = 0u;
+    size_t slot;
 
     if (config == NULL || length == NULL || (destination == NULL && capacity != 0u)) {
         return AI_CONFIG_INVALID_ARGUMENT;
+    }
+    for (slot = 0u; slot < AI_CONFIG_TOKEN_SLOTS; slot++) {
+        if (!serializable_text(config->tokens[slot], AI_CONFIG_BEARER_TOKEN_CAPACITY, 1)) {
+            *length = 0u;
+            return AI_CONFIG_INVALID_VALUE;
+        }
     }
     if (config->version != AI_CONFIG_VERSION ||
         !serializable_text(config->ssid, sizeof(config->ssid), 1) ||
@@ -651,7 +816,7 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("system_prompt=\n") - 1u + strlen(config->system_prompt) +
                sizeof("temperature=\n") - 1u + decimal_length(config->temperature) +
                sizeof("utc_offset_minutes=\n") - 1u + (config->utc_offset_minutes < 0 ? 1u : 0u) +
-               decimal_length(magnitude_of(config->utc_offset_minutes));
+               decimal_length(magnitude_of(config->utc_offset_minutes)) + token_lines_length(config);
     *length = required;
     if (destination == NULL || capacity <= required) {
         return AI_CONFIG_NO_SPACE;
@@ -681,6 +846,9 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
     APPEND_NUMBER_FIELD("port", config->port);
     APPEND_FIELD("model", config->model);
     APPEND_FIELD("bearer_token", config->bearer_token);
+    /* Each provider's remembered key, so switching back never needs it retyped.
+     * The single line above stays for firmware that predates these slots. */
+    append_token_lines(destination, &offset, config);
     APPEND_NUMBER_FIELD("connect_timeout_ms", config->connect_timeout_ms);
     APPEND_NUMBER_FIELD("request_timeout_ms", config->request_timeout_ms);
     APPEND_NUMBER_FIELD("idle_timeout_ms", config->idle_timeout_ms);

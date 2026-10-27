@@ -48,6 +48,8 @@ static void fill(ai_config_t *config) {
     config->port = 8080u;
     strcpy(config->model, "small:model");
     strcpy(config->bearer_token, SECRET_TOKEN);
+    /* The live key is always also the key remembered for its provider. */
+    strcpy(config->tokens[ai_config_token_slot(config->provider)], SECRET_TOKEN);
     config->connect_timeout_ms = 2500u;
     config->request_timeout_ms = 90000u;
     config->idle_timeout_ms = 7000u;
@@ -148,6 +150,8 @@ static void check_maximum_size_round_trip(void) {
     memset(saved.host, 'h', sizeof(saved.host) - 1u);
     memset(saved.model, 'm', sizeof(saved.model) - 1u);
     memset(saved.bearer_token, 't', sizeof(saved.bearer_token) - 1u);
+    memset(saved.tokens[ai_config_token_slot(saved.provider)], 't',
+           sizeof(saved.tokens[0]) - 1u);
     saved.port = 65535u;
     saved.connect_timeout_ms = AI_CONFIG_CONNECT_TIMEOUT_MS_MAX;
     saved.request_timeout_ms = AI_CONFIG_REQUEST_TIMEOUT_MS_MAX;

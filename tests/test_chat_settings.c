@@ -370,6 +370,35 @@ static void check_api_key_is_never_shown(void) {
     CHECK_STR_EQ(config.bearer_token, "");
 }
 
+static void check_api_key_survives_provider_switch(void) {
+    ai_config_t config;
+    char out[64];
+
+    ai_config_init(&config);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "sk-deep") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "openai") == AI_CONFIG_OK);
+
+    /* The DeepSeek key is not offered to OpenAI... */
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK_STR_EQ(ai_config_provider_token(&config, "deepseek"), "sk-deep");
+
+    CHECK(chat_settings_set(&config, CHAT_SETTING_API_KEY, "sk-openai") == AI_CONFIG_OK);
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+
+    /* ...and coming back never means retyping it. */
+    CHECK_STR_EQ(config.bearer_token, "sk-deep");
+    CHECK_STR_EQ(ai_config_provider_token(&config, "openai"), "sk-openai");
+    chat_settings_format(&config, CHAT_SETTING_API_KEY, out, sizeof(out));
+    CHECK_STR_EQ(out, "********");
+
+    /* A LAN provider has no key of its own until one is entered. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "sk-deep");
+}
+
 void test_chat_settings(void) {
     check_labels();
     check_text_fields();
@@ -380,4 +409,5 @@ void test_chat_settings(void) {
     check_temperature();
     check_deepseek_provider();
     check_api_key_is_never_shown();
+    check_api_key_survives_provider_switch();
 }

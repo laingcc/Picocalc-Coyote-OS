@@ -56,6 +56,10 @@
 #define AI_CONFIG_CLOUD_MAX 5u /* how many cloud providers there are */
 #define AI_CONFIG_CLOUD_MODELS_MAX 3u
 
+/* One remembered key per provider, so returning to a provider does not mean
+ * retyping its key on a handheld keyboard: ollama and muse, then the clouds. */
+#define AI_CONFIG_TOKEN_SLOTS (2u + AI_CONFIG_CLOUD_MAX)
+
 #define AI_CONFIG_DEEPSEEK_HOST "api.deepseek.com"
 #define AI_CONFIG_DEEPSEEK_PORT AI_CONFIG_CLOUD_PORT
 #define AI_CONFIG_DEEPSEEK_MODEL_DEFAULT "deepseek-chat"
@@ -97,6 +101,9 @@ typedef struct {
     uint16_t port;
     char model[AI_CONFIG_MODEL_CAPACITY];
     char bearer_token[AI_CONFIG_BEARER_TOKEN_CAPACITY];
+    /* bearer_token is the live key for provider; each provider's key is also
+     * kept in its own slot, indexed by ai_config_token_slot(). */
+    char tokens[AI_CONFIG_TOKEN_SLOTS][AI_CONFIG_BEARER_TOKEN_CAPACITY];
     uint32_t connect_timeout_ms;
     uint32_t request_timeout_ms;
     uint32_t idle_timeout_ms;
@@ -109,8 +116,12 @@ typedef struct {
 typedef struct {
     ai_config_t *config;
     char line[AI_CONFIG_LINE_MAX + 1u];
+    /* A legacy "bearer_token=" line: applied to the file's provider at the
+     * end, because the provider line may follow it. */
+    char pending_token[AI_CONFIG_BEARER_TOKEN_CAPACITY];
     size_t line_length;
-    uint16_t seen_keys;
+    unsigned char pending_token_set;
+    uint32_t seen_keys;
     ai_config_status_t status;
     char error_key[AI_CONFIG_KEY_CAPACITY];
     unsigned char pending_cr;
@@ -148,13 +159,26 @@ ai_config_status_t ai_config_validate(const ai_config_t *config);
 
 /*
  * Switch provider.  Moving to a cloud provider sets its fixed host and port
- * and its default model.  Moving away from one clears the host and model,
- * restores the Ollama port when the new provider is not a cloud one, and
- * clears bearer_token: that key belongs to the provider being left and must
- * never be offered to another host.  Otherwise bearer_token is left alone.
+ * and its default model.  Moving away from one clears the host and model and
+ * restores the Ollama port when the new provider is not a cloud one.
+ *
+ * The key travels with its provider, not with the selection: the outgoing
+ * provider's key is stored in that provider's own slot and the incoming
+ * provider's remembered key becomes bearer_token.  So no key is ever offered to
+ * a host it was not entered for, and switching back never means retyping one.
  * Setting the provider already in use changes nothing.
  */
 ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provider);
+
+/* The slot holding a provider's remembered key, or AI_CONFIG_TOKEN_SLOTS when
+ * the provider is not one this firmware knows. */
+size_t ai_config_token_slot(const char *provider);
+/* The key remembered for a provider; "" when none was entered.  Never NULL. */
+const char *ai_config_provider_token(const ai_config_t *config, const char *provider);
+/* Remember token as provider's key without switching to it.  When provider is
+ * the current one the live bearer_token is updated too. */
+ai_config_status_t ai_config_set_provider_token(ai_config_t *config, const char *provider,
+                                                const char *token);
 ai_config_status_t ai_config_parser_init(ai_config_parser_t *parser, ai_config_t *config);
 ai_config_status_t ai_config_parser_feed(ai_config_parser_t *parser, const void *data, size_t length);
 /* A cloud provider's file may leave out host, port and model: they take that
