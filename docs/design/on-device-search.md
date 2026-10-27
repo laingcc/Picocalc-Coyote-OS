@@ -31,7 +31,7 @@ Fixed header, 160 bytes:
 
 | offset | size | field |
 |---|---|---|
-| 0 | 4 | magic, ASCII `CYX1` (`0x31 0x59 0x58 0x43` in file order) |
+| 0 | 4 | magic, ASCII `CYX1` — `43 59 58 31` in file order |
 | 4 | 2 | version = 1 |
 | 6 | 2 | flags: bit0 = vectors normalized, bit1 = vectors are int8 |
 | 8 | 2 | dim (0 when there are no vectors) |
@@ -138,15 +138,29 @@ search_status_t search_index_read_body(search_index_t *index, uint32_t chunk_id,
 Rules:
 
 - No `malloc`. The struct holds its own buffers; keep it under 16 KB so a caller can hold one
-  as a static. Read from the file in 4 KB chunks through the existing `pico-vfs`/FatFs
-  `fs_*`/`f_*` API used by `storage/file_store.c`, not by loading whole sections.
-- Opening reads and validates the header only. Section data is streamed per query.
+  as a static. Read from the file in 4 KB chunks with stdio, as `storage/file_store.c` does —
+  `fopen`'s handle is the one allocation the C library makes and cannot be avoided here.
+- **Opening checks the header and streams the whole file once for the CRC.** A whole-file CRC
+  cannot be verified from the header alone, so open costs one full read of the index
+  (three seconds for 3 MB on a slow card). Open once per session and keep the struct, rather
+  than reopening per query. If that becomes painful, add a `search_index_verify()` and let open
+  check only the header and section bounds.
 - A query reads only the postings of the terms it contains (binary search over the sorted term
   table), never the whole index.
-- The module must build and pass host tests without the Pico SDK or network. Use the same
-  `fs_*` abstraction the other host-testable modules use; if the existing code is FatFs-only,
-  put the file access behind two small functions in `search_index.c` and keep the rest pure so
-  tests can drive scoring directly.
+- The module must build and pass host tests without the Pico SDK or network.
+
+### Behaviours round 1 pins
+
+- Posting lists list chunk ids in strictly increasing order; the reader rejects anything else as
+  a format error. The builder always writes them that way.
+- Scores are accumulated as Q16 integers, each term rounded with `floor(x * 65536 + 0.5)`,
+  identically in C and Python, so rankings agree exactly across the two implementations.
+- A query with more than 16 distinct non-stopword terms is `SEARCH_ERR_TOO_LARGE`; `max_hits`
+  above `SEARCH_MAX_HITS` (8) is capped.
+- Non-ASCII bytes are dropped without ending a token, so `Zürich` indexes as `zrich`. Treat this
+  as a limitation to revisit with the embedding round, not a feature.
+- A chunk's length counts its title as well as its body.
+- A title is the first `# ` heading in the file, otherwise the file name.
 
 ## Host builder (`tools/search_index/build_index.py`)
 
