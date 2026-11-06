@@ -234,8 +234,7 @@ static void check_serializer_bounds_and_round_trip(void) {
     CHECK(parse_text(&config, &parser,
                      "ssid=wifi\npassword=hidden\nprovider=muse\nhost=muse.local\nport=443\n"
                      "model=chat\nbearer_token=opaque\nconnect_timeout_ms=500\n"
-                     "request_timeout_ms=1000\nidle_timeout_ms=100\nmax_predict=1\n"
-                     "utc_offset_minutes=0\n", 7u) == AI_CONFIG_OK);
+                     "request_timeout_ms=1000\nidle_timeout_ms=100\nmax_predict=1\n", 7u) == AI_CONFIG_OK);
     CHECK(ai_config_serialize(&config, NULL, 0u, &required) == AI_CONFIG_NO_SPACE);
     CHECK(required + 1u < sizeof(guarded));
     memset(guarded, 0xa5, sizeof(guarded));
@@ -396,87 +395,6 @@ static void check_deepseek_defaults(void) {
     CHECK(!ai_config_is_deepseek(NULL));
 }
 
-/* A key is remembered per provider, so switching away and back does not mean
- * typing it again - and it is still only ever offered to its own host. */
-static void check_provider_keys_are_remembered(void) {
-    ai_config_t config;
-    ai_config_t again;
-    ai_config_parser_t parser;
-    int deepseek = ai_config_key_slot("deepseek");
-    int muse = ai_config_key_slot("muse");
-    char text[4096];
-    size_t length = 0u;
-
-    CHECK(ai_config_key_slot("ollama") == 0);
-    CHECK(muse == 1);
-    CHECK(deepseek == 2);
-    CHECK(ai_config_key_slot("claude") == (int)AI_CONFIG_KEY_SLOT_COUNT - 1);
-    CHECK(ai_config_key_slot("bedrock") == -1);
-    CHECK(ai_config_key_slot(NULL) == -1);
-    CHECK_STR_EQ(ai_config_key_slot_name(0u), "ollama");
-    CHECK_STR_EQ(ai_config_key_slot_name(1u), "muse");
-    CHECK_STR_EQ(ai_config_key_slot_name(2u), "deepseek");
-    CHECK(ai_config_key_slot_name(AI_CONFIG_KEY_SLOT_COUNT) == NULL);
-
-    ai_config_init(&config);
-    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
-    strcpy(config.host, "192.0.2.9");
-    strcpy(config.bearer_token, "0123456789abcdef");
-
-    /* Switching away puts the bridge's token under muse... */
-    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
-    CHECK_STR_EQ(config.bearer_token, "");
-    strcpy(config.bearer_token, "fedcba9876543210");
-
-    /* ...and switching back brings that token, not the cloud's. */
-    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
-    CHECK_STR_EQ(config.bearer_token, "0123456789abcdef");
-
-    /* Both are written: the one in force as bearer_token, the other under the
-     * provider it belongs to. */
-    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
-    CHECK(strstr(text, "bearer_token=0123456789abcdef\n") != NULL);
-    CHECK(strstr(text, "key_deepseek=fedcba9876543210\n") != NULL);
-
-    ai_config_init(&again);
-    CHECK(parse_text(&again, &parser, text, 1u) == AI_CONFIG_OK);
-    CHECK_BYTES_EQ(&again, &config, sizeof(config));
-
-    /* A key is only ever written under its own provider's name. */
-    CHECK(parse_text(&again, &parser, text, 1u) == AI_CONFIG_OK);
-    CHECK_STR_EQ(again.provider_keys[ai_config_key_slot("deepseek")], "fedcba9876543210");
-    CHECK_STR_EQ(again.provider_keys[ai_config_key_slot("muse")], "0123456789abcdef");
-
-    /* A file that names only the remembered key still puts it in force. */
-    CHECK(parse_text(&again, &parser,
-                     "provider=muse\nhost=192.0.2.9\nport=8765\nmodel=muse\n"
-                     "key_muse=abcdef0123456789\n",
-                     1u) == AI_CONFIG_OK);
-    CHECK_STR_EQ(again.bearer_token, "abcdef0123456789");
-    CHECK(ai_config_validate(&again) == AI_CONFIG_OK);
-
-    /* A remembered key is held to the same rule as the one in force: it is only
-     * ever sent as a header value, wherever it is kept. */
-    CHECK(parse_text(&again, &parser,
-                     "provider=muse\nhost=192.0.2.9\nport=8765\nmodel=muse\n"
-                     "key_muse=not a token\n",
-                     1u) == AI_CONFIG_OK);
-    CHECK(ai_config_validate(&again) == AI_CONFIG_INVALID_VALUE);
-    CHECK(ai_config_serialize(&again, text, sizeof(text), &length) == AI_CONFIG_INVALID_VALUE);
-
-    /* Twice for the same provider is a duplicate key, as for any other line. */
-    CHECK(parse_text(&again, &parser, "provider=muse\nkey_muse=aaaaaaaa\nkey_muse=bbbbbbbb\n",
-                     1u) == AI_CONFIG_DUPLICATE_KEY);
-    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "key_muse");
-
-    /* A name that is not a provider is ignored, like any other unknown line. */
-    CHECK(parse_text(&again, &parser, "provider=muse\nkey_bedrock=zzz\nkey_muse=a\n", 1u) ==
-          AI_CONFIG_OK);
-    CHECK_STR_EQ(again.bearer_token, "a");
-    CHECK(parse_text(&again, &parser, "provider=muse\nkey_muse=a\nkey_muse=\n", 1u) ==
-          AI_CONFIG_DUPLICATE_KEY);
-}
-
 static void check_deepseek_validation(void) {
     ai_config_t config;
     ai_config_parser_t parser;
@@ -542,24 +460,29 @@ static void check_set_provider(void) {
     ai_config_init(&config);
     strcpy(config.host, "wang.local");
     strcpy(config.model, "llama3.2:1b");
-    strcpy(config.bearer_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0");
+    strcpy(config.bearer_token, "kept");
     config.port = 8080u;
 
-    /* The same provider again changes nothing, so its key stays. */
+    /* The same provider again changes nothing. */
     CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
     CHECK_STR_EQ(config.host, "wang.local");
     CHECK(config.port == 8080u);
-    CHECK_STR_EQ(config.bearer_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0");
 
-    /* Changing provider always drops the key: it belonged to the old one, and
-     * no key is ever offered to a host it was not meant for. */
     CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
     CHECK_STR_EQ(config.provider, "deepseek");
     CHECK_STR_EQ(config.host, "api.deepseek.com");
     CHECK(config.port == 443u);
     CHECK_STR_EQ(config.model, "deepseek-chat");
+    /* The Ollama key is not offered to DeepSeek; it stays in its own slot. */
     CHECK_STR_EQ(config.bearer_token, "");
+    CHECK_STR_EQ(ai_config_provider_token(&config, "ollama"), "kept");
     CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
+
+    /* Coming back restores the key that provider was given. */
+    CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "kept");
+
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
 
     /* Leaving DeepSeek does not carry its endpoint to the next provider. */
     CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
@@ -568,24 +491,93 @@ static void check_set_provider(void) {
     CHECK(config.port == 11434u);
     CHECK_STR_EQ(config.model, "");
 
-    /* Muse brings the bridge's port and its one model; the host is the user's
-     * own machine, so it is left for them to fill in. */
-    strcpy(config.host, "192.0.2.9");
-    strcpy(config.model, "llama3.2:1b");
-    strcpy(config.bearer_token, "9f8e7d6c5b4a39281706f5e4d3c2b1a0");
-    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
-    CHECK_STR_EQ(config.provider, "muse");
-    CHECK_STR_EQ(config.host, "192.0.2.9");
-    CHECK(config.port == 8765u);
-    CHECK_STR_EQ(config.model, "muse");
-    CHECK_STR_EQ(config.bearer_token, "");
-    CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
-
     CHECK(ai_config_set_provider(&config, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK(ai_config_set_provider(&config, "") == AI_CONFIG_INVALID_VALUE);
-    CHECK_STR_EQ(config.provider, "muse");
+    CHECK_STR_EQ(config.provider, "ollama");
     CHECK(ai_config_set_provider(NULL, "ollama") == AI_CONFIG_INVALID_ARGUMENT);
     CHECK(ai_config_set_provider(&config, NULL) == AI_CONFIG_INVALID_ARGUMENT);
+}
+
+static void check_per_provider_tokens(void) {
+    ai_config_t config;
+    ai_config_t reloaded;
+    ai_config_parser_t parser;
+    char text[2048];
+    size_t length = 0u;
+
+    /* Each provider keeps its own key across switches. */
+    ai_config_init(&config);
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK(ai_config_set_provider_token(&config, "deepseek", "sk-deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "sk-deepseek");
+    CHECK(ai_config_set_provider(&config, "openai") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+    CHECK(ai_config_set_provider_token(&config, "openai", "sk-openai") == AI_CONFIG_OK);
+    CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "");
+
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.bearer_token, "sk-deepseek");
+    CHECK_STR_EQ(ai_config_provider_token(&config, "openai"), "sk-openai");
+    CHECK_STR_EQ(ai_config_provider_token(&config, "mistral"), "");
+    CHECK_STR_EQ(ai_config_provider_token(&config, NULL), "");
+
+    /* Both keys survive a save and a load, and neither leaks into the other. */
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
+    CHECK(strstr(text, "bearer_token_deepseek=sk-deepseek\n") != NULL);
+    CHECK(strstr(text, "bearer_token_openai=sk-openai\n") != NULL);
+    CHECK(parse_text(&reloaded, &parser, text, 11u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.bearer_token, "sk-deepseek");
+    CHECK_STR_EQ(ai_config_provider_token(&reloaded, "openai"), "sk-openai");
+    CHECK(ai_config_set_provider(&reloaded, "openai") == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.bearer_token, "sk-openai");
+    CHECK_STR_EQ(ai_config_provider_token(&reloaded, "deepseek"), "sk-deepseek");
+
+    /* A file written before the slots existed still gives its key to the
+     * provider it names, whichever line comes first. */
+    CHECK(parse_text(&reloaded, &parser, "provider=openai\nbearer_token=sk-legacy\n", 99u) ==
+          AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.bearer_token, "sk-legacy");
+    CHECK_STR_EQ(ai_config_provider_token(&reloaded, "openai"), "sk-legacy");
+    CHECK(parse_text(&reloaded, &parser, "bearer_token=sk-legacy\nprovider=openai\n", 99u) ==
+          AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.bearer_token, "sk-legacy");
+    CHECK_STR_EQ(ai_config_provider_token(&reloaded, "openai"), "sk-legacy");
+    /* ... and leaving that provider does not hand the key to the next one. */
+    CHECK(ai_config_set_provider(&reloaded, "gemini") == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.bearer_token, "");
+    CHECK_STR_EQ(ai_config_provider_token(&reloaded, "openai"), "sk-legacy");
+
+    /* A slot key wins over the legacy line for the same provider. */
+    CHECK(parse_text(&reloaded, &parser,
+                     "provider=openai\nbearer_token=sk-legacy\nbearer_token_openai=sk-slot\n",
+                     99u) == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.bearer_token, "sk-slot");
+    CHECK_STR_EQ(ai_config_provider_token(&reloaded, "openai"), "sk-slot");
+
+    /* An unusable key is refused for a provider that is not even selected. */
+    CHECK(parse_text(&reloaded, &parser, "provider=ollama\nbearer_token_openai=bad key\n", 99u) ==
+          AI_CONFIG_INVALID_VALUE);
+    CHECK_STR_EQ(ai_config_parser_error_key(&parser), "bearer_token_openai");
+
+    CHECK(ai_config_token_slot(NULL) == AI_CONFIG_TOKEN_SLOTS);
+    CHECK(ai_config_token_slot("bedrock") == AI_CONFIG_TOKEN_SLOTS);
+    CHECK(ai_config_token_slot("muse") == 1u);
+    CHECK(ai_config_set_provider_token(NULL, "ollama", "k") == AI_CONFIG_INVALID_ARGUMENT);
+    CHECK(ai_config_set_provider_token(&config, "ollama", NULL) == AI_CONFIG_INVALID_ARGUMENT);
+    CHECK(ai_config_set_provider_token(&config, "bedrock", "k") == AI_CONFIG_INVALID_VALUE);
+    {   /* The value is bounded by the field it is copied into. */
+        char longest[AI_CONFIG_BEARER_TOKEN_CAPACITY + 1u];
+        memset(longest, 'k', sizeof(longest) - 1u);
+        longest[sizeof(longest) - 1u] = '\0';
+        CHECK(ai_config_set_provider_token(&config, "ollama", longest) ==
+              AI_CONFIG_VALUE_TOO_LONG);
+        longest[AI_CONFIG_BEARER_TOKEN_CAPACITY - 1u] = '\0';
+        CHECK(ai_config_set_provider_token(&config, "ollama", longest) == AI_CONFIG_OK);
+        /* A shorter key must not leave the tail of the longer one behind. */
+        CHECK(ai_config_set_provider_token(&config, "ollama", "k") == AI_CONFIG_OK);
+        CHECK_STR_EQ(ai_config_provider_token(&config, "ollama"), "k");
+    }
 }
 
 void test_ai_config(void) {
@@ -603,5 +595,5 @@ void test_ai_config(void) {
     check_deepseek_defaults();
     check_deepseek_validation();
     check_set_provider();
-    check_provider_keys_are_remembered();
+    check_per_provider_tokens();
 }

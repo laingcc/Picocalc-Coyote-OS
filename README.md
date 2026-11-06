@@ -63,7 +63,7 @@ ctest --test-dir build-tests --output-on-failure
 ```
 
 Run `./build-tests/coyote_ai_tests` directly to see the count; it currently prints
-`12336 checks, 0 failures`.
+`21428 checks, 0 failures`.
 
 ## Building the firmware
 
@@ -85,6 +85,24 @@ clone run `git submodule update --init --recursive` first.
 
 `-DPICO_BOARD=pico2_w` matters: a board without the CYW43 radio still builds, but CMake warns
 and the firmware is compiled without Wi-Fi, so chat cannot connect.
+
+### A build without the AI
+
+The chat stack is most of the firmware. The calculator, the editor and the USB disk mode stand on
+their own, and `-DCOYOTE_NO_AI=ON` builds just those:
+
+```sh
+cmake -S . -B build -DPICO_BOARD=pico -DCOYOTE_NO_AI=ON -DPICO_SDK_PATH=/path/to/pico-sdk -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j2
+```
+
+That build has no Wi-Fi, no providers, no settings screen and no clock from the network: Home
+offers Text, Calculator and USB disk, and the Chat and Connection settings rows are not drawn.
+
+It is also the only build that fits an RP2040. The full firmware has about 258 KB of static RAM,
+which overflows a Pico W's 264 KB at the link; without the AI stack the same firmware has 19 KB,
+leaving the rest for the stack. Measured here: `pico` 211,640 bytes of flash and 18,860 of RAM,
+`pico_w` 207,728 / 18,860, `pico2` 202,608 / 18,216.
 
 ## Flashing
 

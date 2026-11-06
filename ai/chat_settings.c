@@ -28,8 +28,7 @@ static const setting_info_t settings[CHAT_SETTING_COUNT] = {
 };
 
 /* Scratch for validation; static because the parser is too big for a stack
- * that also carries the UI.  Wiped after every use: it can hold a password
- * or a token. */
+ * that also carries the UI.  Wiped after every use: it can hold a password. */
 static ai_config_parser_t scratch_parser;
 static ai_config_t scratch_config;
 static ai_config_t candidate;
@@ -83,22 +82,17 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
 }
 
 static void store(ai_config_t *config, chat_setting_t field, const ai_config_t *from) {
-    int slot;
-
     switch (field) {
         case CHAT_SETTING_PROVIDER:
-            /* Also moves the host, port and model to the provider's own, and
-             * drops a key that belonged to the cloud provider being left. */
+            /* Also moves the host, port and model to the provider's own.  Each
+             * provider keeps its own key, so the one being entered comes back
+             * with it. */
             ai_config_set_provider(config, from->provider);
             break;
         case CHAT_SETTING_API_KEY:
-            memcpy(config->bearer_token, from->bearer_token, sizeof(config->bearer_token));
-            /* The provider's remembered key is the key in force, or none. */
-            slot = ai_config_key_slot(config->provider);
-            if (slot >= 0) {
-                memcpy(config->provider_keys[slot], from->bearer_token,
-                       sizeof(config->provider_keys[slot]));
-            }
+            /* The key belongs to the provider selected now, and is remembered
+             * for it. */
+            ai_config_set_provider_token(config, config->provider, from->bearer_token);
             break;
         case CHAT_SETTING_MODEL:
             memcpy(config->model, from->model, sizeof(config->model));

@@ -19,8 +19,13 @@
 #define MENU_X ((LCD_WIDTH - MENU_W * 8) / 2)
 #define MENU_Y ((LCD_HEIGHT - MENU_H * 12) / 2)
 #define MODE_MENU_W 24
-/* The rows of the mode menu: a title, a blank, one row per item, and the box. */
-#define MODE_MENU_H 8
+/* The mode menu's rows: a title, a blank, one row per item, then the box. */
+enum { MODE_ROW_TEXT = 0, MODE_ROW_CALCULATOR,
+#ifndef COYOTE_NO_AI
+       MODE_ROW_CHAT, MODE_ROW_SETTINGS,
+#endif
+       MODE_ROW_USB_DISK, MODE_ROW_COUNT };
+#define MODE_MENU_H (MODE_ROW_COUNT + 3)
 #define MODE_MENU_X ((LCD_WIDTH - MODE_MENU_W * 8) / 2)
 #define MODE_MENU_Y ((LCD_HEIGHT - MODE_MENU_H * 12) / 2)
 
@@ -289,21 +294,38 @@ void ui_redraw_tab_content() {
 
 static void redraw_current_mode(void) {
     if (current_mode == MODE_CALCULATOR) ui_redraw_tab_content();
+#ifndef COYOTE_NO_AI
     else if (current_mode == MODE_CHAT) chat_mode_redraw();
+#endif
     else text_mode_redraw();
 }
 
 void ui_show_mode_menu() {
-    MenuItem items[] = {{" Text "}, {" Calculator "}, {" Chat "}, {" Connection settings "}, {" USB disk "}};
-    int sel = run_menu(MODE_MENU_X, MODE_MENU_Y, MODE_MENU_W, MODE_MENU_H, " MODE ", items, 5,
-                       current_mode == MODE_TEXT ? 0 : current_mode == MODE_CHAT ? 2 : 1);
-    if (sel == 0) ui_set_current_mode(MODE_TEXT);
-    else if (sel == 1) ui_set_current_mode(MODE_CALCULATOR);
-    else if (sel == 2) ui_set_current_mode(MODE_CHAT);
+    MenuItem items[MODE_ROW_COUNT] = {
+        [MODE_ROW_TEXT] = {" Text "},
+        [MODE_ROW_CALCULATOR] = {" Calculator "},
+#ifndef COYOTE_NO_AI
+        [MODE_ROW_CHAT] = {" Chat "},
+        [MODE_ROW_SETTINGS] = {" Connection settings "},
+#endif
+        [MODE_ROW_USB_DISK] = {" USB disk "},
+    };
+    int start = current_mode == MODE_TEXT ? MODE_ROW_TEXT
+#ifndef COYOTE_NO_AI
+              : current_mode == MODE_CHAT ? MODE_ROW_CHAT
+#endif
+              : MODE_ROW_CALCULATOR;
+    int sel = run_menu(MODE_MENU_X, MODE_MENU_Y, MODE_MENU_W, MODE_MENU_H, " MODE ", items,
+                       MODE_ROW_COUNT, start);
+    if (sel == MODE_ROW_TEXT) ui_set_current_mode(MODE_TEXT);
+    else if (sel == MODE_ROW_CALCULATOR) ui_set_current_mode(MODE_CALCULATOR);
+#ifndef COYOTE_NO_AI
+    else if (sel == MODE_ROW_CHAT) ui_set_current_mode(MODE_CHAT);
     /* The settings draw over the whole screen; repaint the mode they covered. */
-    else if (sel == 3) { chat_mode_show_connection_settings(); ui_set_current_mode(current_mode); }
+    else if (sel == MODE_ROW_SETTINGS) { chat_mode_show_connection_settings(); ui_set_current_mode(current_mode); }
+#endif
     /* Handing the card to a computer takes the screen; main.c runs it. */
-    else if (sel == 4) { usb_disk_request = true; redraw_current_mode(); }
+    else if (sel == MODE_ROW_USB_DISK) { usb_disk_request = true; redraw_current_mode(); }
     else redraw_current_mode();
 }
 
