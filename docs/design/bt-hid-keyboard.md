@@ -79,7 +79,7 @@ Mapping, from `keyboard_definition.h`:
 | `0x01`–`0x1A` with raw `'a'`–`'z'` (ctrl+letter folded by the driver) | `0x04` + (value − 1), i.e. `0x01` → `a` | `0x01` (Left Ctrl) |
 | `KEY_BACKSPACE` `0x08` | `0x2A` | none |
 | `KEY_TAB` `0x09` | `0x2B` | none |
-| `KEY_ENTER` `0x0A` | `0x28` | none |
+| `KEY_ENTER` `0x0A`, and carriage return `0x0D` | `0x28` | none |
 | `KEY_ESC` `0xB1` | local: leaves the mode | — |
 | `KEY_DEL` `0xD4` | `0x4C` (Delete forward) | none |
 | `KEY_INSERT` `0xD1` | `0x49` | none |
