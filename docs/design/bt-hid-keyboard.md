@@ -51,16 +51,36 @@ That means the keyboard is driven as a **tap**: one HID report with the key and 
 followed by an all-zero report. Holding a key does not repeat, and there is no key-up event to
 report. This is a limitation of the hardware path, not a choice; do not invent a repeat timer.
 
+### The Ctrl collision, and how it is resolved
+
+Folding Ctrl into the character makes three values ambiguous: `0x08`, `0x09` and `0x0A` are
+**both** Ctrl+H/I/J and the named keys Backspace/Tab/Enter. The integer alone cannot say which,
+so the driver must hand the raw key alongside the folded one.
+
+`i2ckbd` folds only letters (`c - 'a' + 1` in `read_i2c_kbd()`), so the raw character still
+distinguishes the two: a Ctrl+H event arrives as **folded `0x08` with raw `'h'`**, while the
+Backspace key arrives as **folded `0x08` with raw `0x08`**. Expose the raw key of the last event
+as `int i2ckbd_raw_key(void)` (returns `-1` when there is no event), threaded through the key
+handler, and map with both values:
+
+```c
+bt_hid_keycode_map(int key, int raw_key, bt_hid_report_t *out)
+```
+
+Rule: if `key` is in `0x01`–`0x1A` **and** `raw_key` is `'a'`–`'z'`, the event is Ctrl+letter.
+Otherwise `0x08`/`0x09`/`0x0A` are Backspace/Tab/Enter. This is a small, behaviour-preserving
+addition to `i2ckbd`: the existing folding and every existing caller stay exactly as they are.
+
 Mapping, from `keyboard_definition.h`:
 
 | Input | HID usage | Modifier |
 |---|---|---|
 | `0x20`–`0x7E` printable ASCII | the usage for that character on a US layout | `0x02` (Left Shift) when the character is uppercase or a shifted symbol |
-| `0x01`–`0x1A` (ctrl+letter folded by the driver) | `0x04` + (value − 1), i.e. `0x01` → `a` | `0x01` (Left Ctrl) |
+| `0x01`–`0x1A` with raw `'a'`–`'z'` (ctrl+letter folded by the driver) | `0x04` + (value − 1), i.e. `0x01` → `a` | `0x01` (Left Ctrl) |
 | `KEY_BACKSPACE` `0x08` | `0x2A` | none |
 | `KEY_TAB` `0x09` | `0x2B` | none |
 | `KEY_ENTER` `0x0A` | `0x28` | none |
-| `KEY_ESC` `0x1B` | local: leaves the mode | — |
+| `KEY_ESC` `0xB1` | local: leaves the mode | — |
 | `KEY_DEL` `0xD4` | `0x4C` (Delete forward) | none |
 | `KEY_INSERT` `0xD1` | `0x49` | none |
 | `KEY_HOME` `0xD2` | `0x4A` | none |
@@ -139,7 +159,9 @@ byte 2-7 keycodes   up to six, zero-filled
 
 1. `cmake -S tests -B build-tests && cmake --build build-tests && ./build-tests/coyote_ai_tests`
    passes, including new tests for the mapping table: every printable ASCII character, every
-   control code `0x01`–`0x1A`, the named keys above, and that unmapped values report unmapped.
+   control code `0x01`–`0x1A` with its letter as the raw key, the named keys above, the
+   collision cases (`0x08`+`'h'` is Ctrl+H, `0x08`+`0x08` is Backspace, and likewise `0x09` and
+   `0x0A`), and that unmapped values report unmapped.
 2. A host test proves the report is well formed: modifiers in byte 0, keycode in byte 2, bytes
    3–7 zero, reserved byte zero.
 3. `-DPICO_BOARD=pico2_w` cross-build succeeds with `-Werror` and no new warnings; `pico2` and
