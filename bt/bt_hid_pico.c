@@ -7,8 +7,10 @@
 #include "bt/bt_hid_keycode.h"
 #include "bt_hid_keyboard.h"
 #include "btstack.h"
+#include "btstack_tlv_flash_bank.h"
 #include "ble/gatt-service/hids_device.h"
 #include "pico/cyw43_arch.h"
+#include "pico/btstack_flash_bank.h"
 #include "pico/time.h"
 
 static const uint8_t hid_descriptor[] = {
@@ -36,6 +38,7 @@ static const uint8_t advertising_data[] = {
 
 static btstack_packet_callback_registration_t hci_registration;
 static btstack_packet_callback_registration_t sm_registration;
+static btstack_tlv_flash_bank_t tlv_context;
 static bt_hid_state_t state = BT_HID_STATE_STARTING;
 static hci_con_handle_t connection_handle = HCI_CON_HANDLE_INVALID;
 static hci_con_handle_t confirm_handle = HCI_CON_HANDLE_INVALID;
@@ -156,6 +159,11 @@ int bt_hid_pico_init(void) {
     bd_addr_t null_address = {0};
     uint16_t interval = 0x0030;
 
+    /* Bonds live in the two flash sectors the SDK reserves for BTstack; without
+     * this the host pairs again after every power cycle. */
+    btstack_tlv_set_instance(btstack_tlv_flash_bank_init_instance(&tlv_context,
+                                                                pico_flash_bank_instance(), NULL),
+                             &tlv_context);
     l2cap_init();
     sm_init();
     sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
