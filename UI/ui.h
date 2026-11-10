@@ -21,7 +21,11 @@ typedef struct {
     int input_index;
 } TabContext;
 
-typedef enum { MODE_CALCULATOR, MODE_TEXT, MODE_CHAT } app_mode_t;
+typedef enum { MODE_CALCULATOR, MODE_TEXT, MODE_CHAT,
+#if COYOTE_HAS_BT
+               MODE_BT_KEYBOARD,
+#endif
+} app_mode_t;
 
 /* ui_show_input_dialog flags.  With none set it is the file-name prompt:
  * path characters are refused and an empty entry cannot be confirmed. */
@@ -60,6 +64,10 @@ void ui_show_notice(const char* text);
 bool ui_take_usb_disk_request();
 void ui_usb_disk_show(bool host_attached, uint32_t blocks);
 void ui_usb_disk_done();
+#if COYOTE_HAS_BT
+void ui_bt_keyboard_show(const char *text);
+void ui_bt_keyboard_done(void);
+#endif
 bool ui_show_file_menu(const char* directory, char* out_filename, int max_len);
 bool ui_show_save_prompt(char* out_filename, int max_len);
 /* Modal text prompt; false if cancelled, leaving out untouched. */

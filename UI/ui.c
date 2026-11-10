@@ -22,7 +22,13 @@
 /* The mode menu's rows: a title, a blank, one row per item, then the box. */
 enum { MODE_ROW_TEXT = 0, MODE_ROW_CALCULATOR,
 #ifndef COYOTE_NO_AI
-       MODE_ROW_CHAT, MODE_ROW_SETTINGS,
+       MODE_ROW_CHAT,
+#endif
+#if COYOTE_HAS_BT
+       MODE_ROW_BT_KEYBOARD,
+#endif
+#ifndef COYOTE_NO_AI
+       MODE_ROW_SETTINGS,
 #endif
        MODE_ROW_USB_DISK, MODE_ROW_COUNT };
 #define MODE_MENU_H (MODE_ROW_COUNT + 3)
@@ -39,6 +45,9 @@ int tab_count = MAX_TABS;
 int active_tab = 0;
 TabContext tab_contexts[MAX_TABS];
 static app_mode_t current_mode = MODE_CALCULATOR;
+#if COYOTE_HAS_BT
+static app_mode_t previous_mode = MODE_CALCULATOR;
+#endif
 static ui_idle_hook_t idle_hook;
 /* Set by the mode menu, cleared when main.c takes it: the USB disk mode needs
  * the card to itself, which only main.c can arrange. */
@@ -306,6 +315,11 @@ void ui_show_mode_menu() {
         [MODE_ROW_CALCULATOR] = {" Calculator "},
 #ifndef COYOTE_NO_AI
         [MODE_ROW_CHAT] = {" Chat "},
+#endif
+#if COYOTE_HAS_BT
+        [MODE_ROW_BT_KEYBOARD] = {" Bluetooth "},
+#endif
+#ifndef COYOTE_NO_AI
         [MODE_ROW_SETTINGS] = {" Connection settings "},
 #endif
         [MODE_ROW_USB_DISK] = {" USB disk "},
@@ -321,6 +335,11 @@ void ui_show_mode_menu() {
     else if (sel == MODE_ROW_CALCULATOR) ui_set_current_mode(MODE_CALCULATOR);
 #ifndef COYOTE_NO_AI
     else if (sel == MODE_ROW_CHAT) ui_set_current_mode(MODE_CHAT);
+#endif
+#if COYOTE_HAS_BT
+    else if (sel == MODE_ROW_BT_KEYBOARD) { previous_mode = current_mode; current_mode = MODE_BT_KEYBOARD; }
+#endif
+#ifndef COYOTE_NO_AI
     /* The settings draw over the whole screen; repaint the mode they covered. */
     else if (sel == MODE_ROW_SETTINGS) { chat_mode_show_connection_settings(); ui_set_current_mode(current_mode); }
 #endif
@@ -328,6 +347,19 @@ void ui_show_mode_menu() {
     else if (sel == MODE_ROW_USB_DISK) { usb_disk_request = true; redraw_current_mode(); }
     else redraw_current_mode();
 }
+
+#if COYOTE_HAS_BT
+void ui_bt_keyboard_show(const char *text) {
+    lcd_clear();
+    set_current_x(0);
+    set_current_y(12);
+    lcd_print_string((char *)text);
+}
+
+void ui_bt_keyboard_done(void) {
+    ui_set_current_mode(previous_mode);
+}
+#endif
 
 bool ui_take_usb_disk_request() {
     bool requested = usb_disk_request;

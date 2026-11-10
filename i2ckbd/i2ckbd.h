@@ -15,6 +15,7 @@
 
 void init_i2c_kbd();
 int read_i2c_kbd();
+int i2ckbd_raw_key(void);
 int read_battery();
 int set_kbd_backlight(uint8_t);
 

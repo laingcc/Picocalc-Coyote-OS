@@ -19,6 +19,9 @@ the local network, or directly from [DeepSeek](https://api-docs.deepseek.com) ov
   SD card.
 - **AI chat** – type a message, Enter sends it, the reply streams in as it is generated. The
   transcript keeps the last four turns.
+- **Bluetooth keyboard** – forwards the PicoCalc keyboard to a BLE HID host with no host-side
+  driver or app. Pairing uses Just Works: anyone in radio range can pair while this mode is
+  advertising.
 - **Wi-Fi manager** – joins a WPA2-AES (or open) network in the background and retries with
   backoff after a drop.
 - **Network scan** – pick the SSID from a list of up to 16 scanned networks instead of typing it.
@@ -63,7 +66,7 @@ ctest --test-dir build-tests --output-on-failure
 ```
 
 Run `./build-tests/coyote_ai_tests` directly to see the count; it currently prints
-`21428 checks, 0 failures`.
+`22815 checks, 0 failures`.
 
 ## Building the firmware
 

@@ -54,6 +54,9 @@ void app_services_init(void);
  */
 void app_services_poll(void);
 
+/* Initialise the shared CYW43 radio once.  Returns 0 when it is available. */
+int app_services_radio_ensure(void);
+
 /*
  * Adopt a configuration: cancels any chat in flight, stores a copy, and
  * (re)starts the Wi-Fi station with its credentials.  Returns -1 if config is

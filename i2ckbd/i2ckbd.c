@@ -3,6 +3,7 @@
 #include "i2ckbd.h"
 
 static uint8_t i2c_inited = 0;
+static int raw_key = -1;
 
 void init_i2c_kbd() {
     gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_I2C);
@@ -21,6 +22,7 @@ int read_i2c_kbd() {
     unsigned char msg[2];
     int c = -1;
     msg[0] = 0x09;
+    raw_key = -1;
 
     if (i2c_inited == 0) return -1;
 
@@ -50,11 +52,16 @@ int read_i2c_kbd() {
                     break;
             }
             c = realc;
+            raw_key = c;
             if (c >= 'a' && c <= 'z' && ctrlheld)c = c - 'a' + 1;
         }
         return c;
     }
     return -1;
+}
+
+int i2ckbd_raw_key(void) {
+    return raw_key;
 }
 
 int read_battery() {
