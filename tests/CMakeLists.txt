@@ -47,6 +47,7 @@ add_library(coyote_ai STATIC
     # a card that is a buffer.
     "${COYOTE_ROOT}/storage/usb_disk.c"
     "${COYOTE_ROOT}/storage/screenshot.c"
+    "${COYOTE_ROOT}/bt/bt_hid_keycode.c"
 )
 # The store's rename goes through a test double so the tests can fail it and
 # imitate FAT, which will not rename over an existing file.
@@ -95,6 +96,7 @@ add_executable(coyote_ai_tests
     test_time_sync.c
     test_mode_menu.c
     test_usb_disk.c
+    test_bt_hid_keycode.c
 )
 target_link_libraries(coyote_ai_tests PRIVATE coyote_ui coyote_ai)
 target_compile_options(coyote_ai_tests PRIVATE -Wall -Wextra -Werror)

@@ -1,5 +1,23 @@
 #include "ai/app_services.h"
 
+#if defined(COYOTE_NO_AI) && COYOTE_NO_AI
+
+#include <stdbool.h>
+
+#include "pico/cyw43_arch.h"
+
+static bool radio_initialised;
+
+int app_services_radio_ensure(void) {
+    if (!radio_initialised) {
+        if (cyw43_arch_init() != 0) return -1;
+        radio_initialised = true;
+    }
+    return 0;
+}
+
+#else
+
 #include <stdint.h>
 #include <string.h>
 
@@ -63,14 +81,19 @@ static bool platform_link_up(void *context) {
 
 static bool radio_initialised;
 
-static int radio_on(void *context) {
-    (void)context;
+int app_services_radio_ensure(void) {
     if (!radio_initialised) {
         if (cyw43_arch_init() != 0) {
             return -1;
         }
         radio_initialised = true;
     }
+    return 0;
+}
+
+static int radio_on(void *context) {
+    (void)context;
+    if (app_services_radio_ensure() != 0) return -1;
     cyw43_arch_enable_sta_mode();
     return 0;
 }
@@ -747,3 +770,5 @@ http_stream_error_t app_services_chat_error(void) {
 int app_services_chat_status_code(void) {
     return http_stream_status_code(&services.stream);
 }
+
+#endif
