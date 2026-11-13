@@ -288,7 +288,7 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     if (strcmp(config->provider, provider) == 0) {
         return AI_CONFIG_OK;
     }
-    if (ai_config_cloud(config) != NULL) {
+    if (ai_config_cloud(config) != NULL || strcmp(config->provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
         /* Nothing of the endpoint being left goes to the next one. */
         memset(config->host, 0, sizeof(config->host));
         config->port = AI_CONFIG_OLLAMA_PORT;
@@ -300,6 +300,12 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     ai_config_set_provider_token(config, config->provider, config->bearer_token);
     if (ai_config_cloud_find(provider) != NULL) {
         use_cloud_endpoint(config, ai_config_cloud_find(provider));
+    } else if (strcmp(provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
+        /* The bridge is the user's own machine, so only the port and the one
+         * model it serves are filled in; the host is theirs to type. */
+        config->port = AI_CONFIG_MUSE_PORT;
+        memset(config->model, 0, sizeof(config->model));
+        memcpy(config->model, AI_CONFIG_MUSE_MODEL, strlen(AI_CONFIG_MUSE_MODEL) + 1u);
     }
     memset(config->provider, 0, sizeof(config->provider));
     memcpy(config->provider, provider, strlen(provider) + 1u);

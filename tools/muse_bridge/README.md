@@ -1,7 +1,9 @@
 # Coyote Muse Bridge
 
 `coyote-muse-bridge` keeps the official Muse Gadget Linux connection and adds a
-small authenticated streaming HTTP endpoint for Coyote OS. It subclasses the
+small authenticated streaming HTTP endpoint for Coyote OS, plus an
+Ollama-compatible `POST /api/chat` so a PicoCalc can use it as its normal chat
+host (see [PicoCalc setup](#picocalc-setup)). It subclasses the
 SDK's `LinkSession`, opens `POST /chat/subscribe` after registration, and uses
 the inherited `send_chat()` implementation. TLS, WebSocket, Noise, token
 refresh, command dispatch, pairing state, and reconnect behavior remain the
@@ -125,6 +127,100 @@ The response is `application/x-ndjson`; each `start`, `text_delta`, `busy`,
 registered/subscribed Muse session, and `502` failure before Muse accepts the
 turn.
 
+### Ollama-compatible endpoint
+
+`POST /api/chat` takes the same bearer token and an Ollama chat request of at
+most 16 KiB:
+
+- `model` must be `muse` or `muse:latest`, and `stream` must be `true`.
+- `messages` is a list of 1 to 64 objects with a `role` of `system`, `user` or
+  `assistant` and a string `content`. **Only the content of the latest `user`
+  message is sent to Muse**; it must not be empty. Muse keeps its own
+  conversation, so the system prompt and earlier turns the client repeats are
+  validated and then dropped.
+- Everything else (`options`, `tools`, `format`, `keep_alive`, …) is ignored.
+  Nothing in the request can select a tool, an action or a Muse session.
+
+The reply is Ollama NDJSON. Text arrives as
+`{"message":{"role":"assistant","content":"…"},"done":false}` in pieces of at
+most 256 characters, a successful turn ends with exactly one `{"done":true}`,
+and a turn Muse does not finish ends with one `{"error":"…"}` record instead.
+While Muse is thinking, a record with empty `content` is written every 4
+seconds (never more than 5 apart) so the client's idle timeout does not fire.
+Rejections before the stream starts use the same statuses as `/v1/chat`, with
+an `{"error":"…"}` body.
+
+`GET /api/tags` returns the single model `muse` and requires the same token.
+No other Ollama route exists.
+
+```sh
+curl --no-buffer \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"muse","stream":true,"messages":[{"role":"user","content":"Hello"}]}' \
+  http://127.0.0.1:8765/api/chat
+```
+
+## PicoCalc setup
+
+Coyote OS talks to the bridge exactly as it talks to Ollama, with one extra
+setting for the token.
+
+1. Let the bridge listen on the LAN. It binds to loopback by default; start it
+   with `--bind` set to this machine's LAN address (or `0.0.0.0`). With the
+   supplied unit, use a drop-in (`sudo systemctl edit coyote-muse-bridge`):
+
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=/opt/coyote-muse-bridge/.venv/bin/coyote-muse-bridge --token-file /etc/coyote-muse-bridge/token --bind 192.168.1.20
+   ```
+
+2. On the PicoCalc press F5 in chat mode, choose **Connection settings**, then
+   **Provider** and pick **muse** (it sits right after `ollama`): that fills in
+   **Port** `8765` and **Model** `muse`. Set the one remaining value:
+
+   | Setting | Value |
+   | --- | --- |
+   | Host | the bridge machine's LAN IP address, e.g. `192.168.1.20` |
+   | API key | the contents of `/etc/coyote-muse-bridge/token` |
+
+   then **Apply & connect**.
+
+   **API key** is the single credential setting: for a cloud provider it holds
+   that provider's key, and for `muse` it holds the bridge token. It is masked
+   while you type it, and stored in plain text in `/coyote/ai.ini` as
+   `bearer_token=`. A key is remembered per provider, so choosing another one
+   and coming back to `muse` brings this token back.
+
+   The token from `openssl rand -hex 32` is 64 characters. Rather than typing
+   it on the PicoCalc keyboard, you can put it on the SD card from a computer
+   by adding one line to `/coyote/ai.ini` (it must look like a bearer token:
+   letters, digits and `-._~+/`, with any `=` padding last):
+
+   ```ini
+   bearer_token=<contents of /etc/coyote-muse-bridge/token>
+   ```
+
+   Read the token with `sudo cat /etc/coyote-muse-bridge/token` on the bridge
+   machine; do not paste it into chats, issues or logs.
+
+Things to know:
+
+- **Trusted LAN only.** The PicoCalc speaks plain HTTP, so the bearer token
+  and every message cross the network unencrypted, readable by anyone on that
+  network. Run this only on a LAN you control, and never expose port 8765 to
+  the Internet, directly or through a port forward.
+- The PicoCalc keeps the token in plain text in `/coyote/ai.ini`. Anyone who
+  can hold the SD card can read it. If the card or the device is lost, write a
+  new token to `/etc/coyote-muse-bridge/token` and restart the bridge.
+- The firmware stops waiting after its **Request ms** setting (120 s by
+  default) however alive the stream is. Raise it under **Connection settings**
+  (up to `600000`) if Muse's longer replies are cut off; a cut-off turn still
+  runs to its end on Muse and holds the bridge busy (`409`) until it settles.
+- The firmware's **System prompt**, **Temperature** and **Max predict**
+  settings have no effect on Muse.
+
 ## Test
 
 ```sh
@@ -138,6 +234,8 @@ uv run --isolated --extra test pytest -q
   cannot attach to the next client.
 - Client disconnect does **not** cancel work on Muse; the official API used here
   exposes no server-cancellation contract.
+- The acknowledgement from Muse is awaited before any response byte is
+  written, so a slow acknowledgement is not covered by `/api/chat` heartbeats.
 - Replies are text-only. Completion uses a quiet-settle window because a Muse
   turn may emit multiple assistant messages and busy/idle events.
 - Pairing and a real end-to-end Muse reply require a Muse account/device and

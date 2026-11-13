@@ -43,6 +43,10 @@
 #define AI_CONFIG_PROVIDER_GEMINI "gemini"
 #define AI_CONFIG_PROVIDER_CLAUDE "claude"
 #define AI_CONFIG_OLLAMA_PORT 11434u
+/* The Muse bridge answers Ollama's protocol on the port it is given, with one
+ * model, which is what picking Muse fills in. */
+#define AI_CONFIG_MUSE_PORT 8765u
+#define AI_CONFIG_MUSE_MODEL "muse"
 
 /*
  * The cloud providers ("deepseek", "openai", "mistral", "gemini", "claude")
