@@ -21,6 +21,9 @@
 #include "storage/screenshot.h"
 #include "storage/usb_disk.h"
 #include "usb/usb_msc.h"
+#if COYOTE_HAS_BT
+#include "bt/bt_hid.h"
+#endif
 
 #define COYOTE_DIR "/coyote"
 #define KEY_SCREENSHOT 0x13 /* Ctrl+S */
@@ -41,6 +44,24 @@ static void take_screenshot(void) {
 
 void handle_keyboard() {
     int c = lcd_getc(0);
+#if COYOTE_HAS_BT
+    static bool bt_mode_active;
+    if (ui_get_current_mode() == MODE_BT_KEYBOARD) {
+        if (!bt_mode_active) {
+            bt_hid_init();
+            bt_mode_active = true;
+        }
+        bt_hid_poll();
+        if (c == KEY_ESC) {
+            bt_hid_leave();
+            bt_mode_active = false;
+            ui_bt_keyboard_done();
+        } else if (c != KEY_NONE && c != -1) {
+            bt_hid_key(c, i2ckbd_raw_key());
+        }
+        return;
+    }
+#endif
     if (c == KEY_SCREENSHOT) { take_screenshot(); return; }
     if (c == KEY_HOME) { ui_show_mode_menu(); return; }
     if (ui_get_current_mode() == MODE_TEXT) { text_mode_handle_input(c); return; }

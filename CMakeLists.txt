@@ -95,6 +95,26 @@ endif()
 
 add_executable(coyote ${COYOTE_SOURCES})
 
+if (PICO_CYW43_SUPPORTED)
+    target_sources(coyote PRIVATE
+        bt/bt_hid.c
+        bt/bt_hid_pico.c
+        bt/bt_hid_keycode.c
+    )
+    target_compile_definitions(coyote PRIVATE COYOTE_HAS_BT=1)
+    if (COYOTE_NO_AI)
+        target_sources(coyote PRIVATE ai/app_services.c)
+    endif()
+    target_include_directories(coyote PRIVATE ${CMAKE_CURRENT_LIST_DIR}/bt)
+    target_link_libraries(coyote PRIVATE
+        pico_btstack_ble
+        pico_btstack_cyw43
+        pico_btstack_flash_bank
+        pico_btstack_run_loop_async_context
+    )
+    pico_btstack_make_gatt_header(coyote PRIVATE ${CMAKE_CURRENT_LIST_DIR}/bt/bt_hid_keyboard.gatt)
+endif()
+
 if (COYOTE_NO_AI)
     target_compile_definitions(coyote PRIVATE COYOTE_NO_AI=1)
 endif()
