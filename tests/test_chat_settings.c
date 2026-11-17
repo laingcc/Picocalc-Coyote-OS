@@ -309,11 +309,12 @@ static void check_deepseek_provider(void) {
     CHECK(chat_settings_set(&config, CHAT_SETTING_MAX_PREDICT, "512") == AI_CONFIG_OK);
     CHECK(config.max_predict == 512u);
 
-    /* Back to Ollama: DeepSeek's host, port and model do not come along. */
+    /* Back to Ollama: DeepSeek's host, port and model do not come along;
+     * the Ollama server entered before does. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "ollama") == AI_CONFIG_OK);
-    CHECK_STR_EQ(config.host, "");
+    CHECK_STR_EQ(config.host, "wang.local");
     CHECK(config.port == 11434u);
-    CHECK_STR_EQ(config.model, "");
+    CHECK_STR_EQ(config.model, "llama3.2:1b");
     CHECK_STR_EQ(config.ssid, "Home Net");
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
     CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_OK);
