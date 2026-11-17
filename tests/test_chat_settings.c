@@ -50,7 +50,6 @@ static void check_text_fields(void) {
     /* Rejections leave the old value in place. */
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.host, "192.168.1.20");
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
     CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK_STR_EQ(config.provider, "ollama");
     CHECK(chat_settings_set(&config, CHAT_SETTING_SSID, " padded") == AI_CONFIG_INVALID_VALUE);
@@ -318,8 +317,12 @@ static void check_deepseek_provider(void) {
     CHECK_STR_EQ(config.ssid, "Home Net");
     CHECK(chat_settings_set(&config, CHAT_SETTING_HOST, "wang.local") == AI_CONFIG_OK);
     CHECK(chat_settings_set(&config, CHAT_SETTING_MODEL, "llama3.2:1b") == AI_CONFIG_OK);
-    /* Muse is still not selectable here, as before. */
-    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_INVALID_VALUE);
+    /* Muse is selectable: it fills in the bridge's port and its one model,
+     * leaving the host for the user to type. */
+    CHECK(chat_settings_set(&config, CHAT_SETTING_PROVIDER, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.provider, "muse");
+    CHECK(config.port == AI_CONFIG_MUSE_PORT);
+    CHECK_STR_EQ(config.model, AI_CONFIG_MUSE_MODEL);
 }
 
 static void check_api_key_is_never_shown(void) {

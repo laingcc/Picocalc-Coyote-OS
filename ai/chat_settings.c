@@ -65,7 +65,7 @@ static ai_config_status_t precheck(chat_setting_t field, const char *value) {
         return AI_CONFIG_INVALID_VALUE;
     }
     if (field == CHAT_SETTING_PROVIDER && strcmp(value, AI_CONFIG_PROVIDER_OLLAMA) != 0 &&
-        ai_config_cloud_find(value) == NULL) {
+        strcmp(value, AI_CONFIG_PROVIDER_MUSE) != 0 && ai_config_cloud_find(value) == NULL) {
         return AI_CONFIG_INVALID_VALUE;
     }
     if (field == CHAT_SETTING_MODEL && length > OLLAMA_MODEL_MAX) {
