@@ -5,13 +5,23 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Upper bound of ai_config_serialize output: every text field at capacity
- * plus, per line, the key, '=', a 32-bit decimal and the newline. */
+/* Upper bound of ai_config_serialize output: every text field at capacity,
+ * one line per remembered key and per remembered endpoint, plus, per line,
+ * the key, '=' and the newline.  The old bound counted a single key's value,
+ * so a config with keys for several providers - an OpenAI key alone can be
+ * 160 chars - serialized past the buffer and the save failed with the keys
+ * still only in RAM. */
 #define CONFIG_STORE_KEY_COUNT 15u
 #define CONFIG_STORE_TEXT_CAPACITY \
     (AI_CONFIG_SSID_CAPACITY + AI_CONFIG_PASSWORD_CAPACITY + AI_CONFIG_PROVIDER_CAPACITY + \
      AI_CONFIG_HOST_CAPACITY + AI_CONFIG_MODEL_CAPACITY + AI_CONFIG_BEARER_TOKEN_CAPACITY + \
      AI_CONFIG_SYSTEM_PROMPT_CAPACITY + \
+     AI_CONFIG_TOKEN_SLOTS * (sizeof("bearer_token_") - 1u + AI_CONFIG_PROVIDER_CAPACITY + 1u + \
+                              AI_CONFIG_BEARER_TOKEN_CAPACITY + 1u) + \
+     (sizeof("host_ollama=") - 1u + AI_CONFIG_HOST_CAPACITY + 1u) + \
+     (sizeof("port_ollama=") - 1u + 10u + 1u) + \
+     (sizeof("model_ollama=") - 1u + AI_CONFIG_MODEL_CAPACITY + 1u) + \
+     (sizeof("host_muse=") - 1u + AI_CONFIG_HOST_CAPACITY + 1u) + \
      CONFIG_STORE_KEY_COUNT * (AI_CONFIG_KEY_CAPACITY + 1u + 10u + 1u) + 1u)
 
 /* Scratch state: a file chunk while loading, the whole file while saving. */
