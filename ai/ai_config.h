@@ -108,6 +108,15 @@ typedef struct {
     /* bearer_token is the live key for provider; each provider's key is also
      * kept in its own slot, indexed by ai_config_token_slot(). */
     char tokens[AI_CONFIG_TOKEN_SLOTS][AI_CONFIG_BEARER_TOKEN_CAPACITY];
+    /* The endpoint of a provider whose host the user types, remembered the
+     * same way: Ollama's host, port and model, and the Muse bridge's host
+     * (its port and model are fixed).  Cloud endpoints are fixed, so they
+     * need no slot.  Switching away and back restores the endpoint instead
+     * of leaving a blank one to retype. */
+    char ollama_host[AI_CONFIG_HOST_CAPACITY];
+    uint16_t ollama_port;
+    char ollama_model[AI_CONFIG_MODEL_CAPACITY];
+    char muse_host[AI_CONFIG_HOST_CAPACITY];
     uint32_t connect_timeout_ms;
     uint32_t request_timeout_ms;
     uint32_t idle_timeout_ms;
@@ -163,14 +172,17 @@ ai_config_status_t ai_config_validate(const ai_config_t *config);
 
 /*
  * Switch provider.  Moving to a cloud provider sets its fixed host and port
- * and its default model.  Moving away from one clears the host and model and
- * restores the Ollama port when the new provider is not a cloud one.
+ * and its default model.  Moving away from one clears the live host and model
+ * and restores the Ollama port when the new provider is not a cloud one.
  *
  * The key travels with its provider, not with the selection: the outgoing
  * provider's key is stored in that provider's own slot and the incoming
  * provider's remembered key becomes bearer_token.  So no key is ever offered to
  * a host it was not entered for, and switching back never means retyping one.
- * Setting the provider already in use changes nothing.
+ * The endpoint of a provider whose host the user types travels the same way:
+ * leaving Ollama remembers its host, port and model, leaving Muse remembers
+ * its host, and coming back restores them.  Setting the provider already in
+ * use changes nothing.
  */
 ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provider);
 
