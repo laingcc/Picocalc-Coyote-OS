@@ -37,7 +37,7 @@ static char note[NOTE_MAX + 1];
 static char status_drawn[COLS + 1];
 static char setting_labels[CHAT_SETTING_COUNT + 1][32];
 static char scan_labels[WIFI_SCAN_MAX_NETWORKS][32];
-static char choice_labels[1 + AI_CONFIG_CLOUD_MAX][32]; /* provider or model choices */
+static char choice_labels[2 + AI_CONFIG_CLOUD_MAX][32]; /* provider or model choices */
 static char conv_titles[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 1u];
 static char conv_labels[CONV_STORE_MAX_CONVERSATIONS][CONV_STORE_TITLE_MAX + 3u];
 static const char *conv_label_ptrs[CONV_STORE_MAX_CONVERSATIONS];

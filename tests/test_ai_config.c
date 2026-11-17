@@ -478,18 +478,23 @@ static void check_set_provider(void) {
     CHECK_STR_EQ(ai_config_provider_token(&config, "ollama"), "kept");
     CHECK(ai_config_validate(&config) == AI_CONFIG_OK);
 
-    /* Coming back restores the key that provider was given. */
+    /* Coming back restores the key that provider was given, and the
+     * Ollama server it talks to. */
     CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
     CHECK_STR_EQ(config.bearer_token, "kept");
+    CHECK_STR_EQ(config.host, "wang.local");
+    CHECK(config.port == 8080u);
+    CHECK_STR_EQ(config.model, "llama3.2:1b");
 
     CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
 
-    /* Leaving DeepSeek does not carry its endpoint to the next provider. */
+    /* Leaving DeepSeek does not carry its endpoint to the next provider:
+     * the Ollama server this device talks to comes back instead. */
     CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
     CHECK_STR_EQ(config.provider, "ollama");
-    CHECK_STR_EQ(config.host, "");
-    CHECK(config.port == 11434u);
-    CHECK_STR_EQ(config.model, "");
+    CHECK_STR_EQ(config.host, "wang.local");
+    CHECK(config.port == 8080u);
+    CHECK_STR_EQ(config.model, "llama3.2:1b");
 
     CHECK(ai_config_set_provider(&config, "bedrock") == AI_CONFIG_INVALID_VALUE);
     CHECK(ai_config_set_provider(&config, "") == AI_CONFIG_INVALID_VALUE);
@@ -580,6 +585,72 @@ static void check_per_provider_tokens(void) {
     }
 }
 
+
+/* Each provider's endpoint is remembered across switches, like its key:
+ * the Ollama server address and model, and the Muse bridge's host. */
+static void check_per_provider_endpoints(void) {
+    ai_config_t config;
+    ai_config_t reloaded;
+    ai_config_parser_t parser;
+    char text[2048];
+    size_t length = 0u;
+
+    ai_config_init(&config);
+    strcpy(config.host, "wang.local");
+    strcpy(config.model, "llama3.2:1b");
+    config.port = 8080u;
+
+    /* Ollama's server survives a trip to a cloud provider and back. */
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "api.deepseek.com");
+    CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "wang.local");
+    CHECK(config.port == 8080u);
+    CHECK_STR_EQ(config.model, "llama3.2:1b");
+
+    /* The Muse bridge's host survives the same trip. */
+    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.model, "muse");
+    CHECK(config.port == 8765u);
+    strcpy(config.host, "bridge.local");
+    CHECK(ai_config_set_provider(&config, "deepseek") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "api.deepseek.com");
+    CHECK(ai_config_set_provider(&config, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "bridge.local");
+    CHECK(config.port == 8765u);
+    CHECK_STR_EQ(config.model, "muse");
+    /* And Ollama's server is still there after all of that. */
+    CHECK(ai_config_set_provider(&config, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(config.host, "wang.local");
+    CHECK(config.port == 8080u);
+    CHECK_STR_EQ(config.model, "llama3.2:1b");
+
+    /* Both endpoints survive a save and a load. */
+    CHECK(ai_config_serialize(&config, text, sizeof(text), &length) == AI_CONFIG_OK);
+    CHECK(strstr(text, "host_ollama=wang.local\n") != NULL);
+    CHECK(strstr(text, "port_ollama=8080\n") != NULL);
+    CHECK(strstr(text, "model_ollama=llama3.2:1b\n") != NULL);
+    CHECK(strstr(text, "host_muse=bridge.local\n") != NULL);
+    CHECK(parse_text(&reloaded, &parser, text, 11u) == AI_CONFIG_OK);
+    CHECK(ai_config_set_provider(&reloaded, "deepseek") == AI_CONFIG_OK);
+    CHECK(ai_config_set_provider(&reloaded, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.host, "wang.local");
+    CHECK(reloaded.port == 8080u);
+    CHECK_STR_EQ(reloaded.model, "llama3.2:1b");
+    CHECK(ai_config_set_provider(&reloaded, "muse") == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.host, "bridge.local");
+
+    /* A file written before the endpoints were remembered still works: the
+     * endpoint in force is stashed when its provider is left. */
+    CHECK(parse_text(&reloaded, &parser,
+                     "provider=ollama\nhost=old.local\nport=11434\nmodel=old-model\n",
+                     99u) == AI_CONFIG_OK);
+    CHECK(ai_config_set_provider(&reloaded, "deepseek") == AI_CONFIG_OK);
+    CHECK(ai_config_set_provider(&reloaded, "ollama") == AI_CONFIG_OK);
+    CHECK_STR_EQ(reloaded.host, "old.local");
+    CHECK(reloaded.port == 11434u);
+    CHECK_STR_EQ(reloaded.model, "old-model");
+}
 void test_ai_config(void) {
     check_defaults();
     check_incremental_parse();
@@ -596,4 +667,5 @@ void test_ai_config(void) {
     check_deepseek_validation();
     check_set_provider();
     check_per_provider_tokens();
+    check_per_provider_endpoints();
 }

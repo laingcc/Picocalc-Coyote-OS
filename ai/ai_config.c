@@ -27,6 +27,12 @@ enum {
     KEY_BEARER_MISTRAL,
     KEY_BEARER_GEMINI,
     KEY_BEARER_CLAUDE,
+    /* A remembered endpoint: Ollama's host, port and model, and the Muse
+     * bridge's host.  Cloud endpoints are fixed, so they need no key. */
+    KEY_HOST_OLLAMA,
+    KEY_PORT_OLLAMA,
+    KEY_MODEL_OLLAMA,
+    KEY_HOST_MUSE,
     KEY_UNKNOWN
 };
 
@@ -36,7 +42,7 @@ static const char *const key_names[] = {
     "max_predict", "system_prompt", "temperature", "utc_offset_minutes",
     "bearer_token_ollama", "bearer_token_muse", "bearer_token_deepseek",
     "bearer_token_openai", "bearer_token_mistral", "bearer_token_gemini",
-    "bearer_token_claude"
+    "bearer_token_claude", "host_ollama", "port_ollama", "model_ollama", "host_muse"
 };
 
 _Static_assert(sizeof(key_names) / sizeof(key_names[0]) == (size_t)KEY_UNKNOWN,
@@ -288,6 +294,17 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
     if (strcmp(config->provider, provider) == 0) {
         return AI_CONFIG_OK;
     }
+    /* The endpoint being left stays with its provider, like its key: the
+     * Ollama server address and model are the user's own typing, and the
+     * bridge's host is too.  Cloud endpoints are fixed, so there is nothing
+     * to keep for them. */
+    if (strcmp(config->provider, AI_CONFIG_PROVIDER_OLLAMA) == 0) {
+        memcpy(config->ollama_host, config->host, sizeof(config->ollama_host));
+        config->ollama_port = config->port;
+        memcpy(config->ollama_model, config->model, sizeof(config->ollama_model));
+    } else if (strcmp(config->provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
+        memcpy(config->muse_host, config->host, sizeof(config->muse_host));
+    }
     if (ai_config_cloud(config) != NULL || strcmp(config->provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
         /* Nothing of the endpoint being left goes to the next one. */
         memset(config->host, 0, sizeof(config->host));
@@ -302,10 +319,26 @@ ai_config_status_t ai_config_set_provider(ai_config_t *config, const char *provi
         use_cloud_endpoint(config, ai_config_cloud_find(provider));
     } else if (strcmp(provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
         /* The bridge is the user's own machine, so only the port and the one
-         * model it serves are filled in; the host is theirs to type. */
+         * model it serves are filled in; the host is the one remembered for
+         * it, or blank when none was ever typed. */
         config->port = AI_CONFIG_MUSE_PORT;
         memset(config->model, 0, sizeof(config->model));
         memcpy(config->model, AI_CONFIG_MUSE_MODEL, strlen(AI_CONFIG_MUSE_MODEL) + 1u);
+        memset(config->host, 0, sizeof(config->host));
+        if (config->muse_host[0] != '\0') {
+            memcpy(config->host, config->muse_host, strlen(config->muse_host) + 1u);
+        }
+    } else {
+        /* Ollama: bring back the server this device talks to, if one was
+         * ever entered.  A blank host means it never was, and the port
+         * stays the default. */
+        if (config->ollama_host[0] != '\0') {
+            memset(config->host, 0, sizeof(config->host));
+            memcpy(config->host, config->ollama_host, strlen(config->ollama_host) + 1u);
+            config->port = config->ollama_port != 0u ? config->ollama_port : AI_CONFIG_OLLAMA_PORT;
+            memset(config->model, 0, sizeof(config->model));
+            memcpy(config->model, config->ollama_model, strlen(config->ollama_model) + 1u);
+        }
     }
     memset(config->provider, 0, sizeof(config->provider));
     memcpy(config->provider, provider, strlen(provider) + 1u);
@@ -454,6 +487,24 @@ static ai_config_status_t parse_known(ai_config_parser_t *parser, int id, const 
             return copy_value(parser, id,
                               config->tokens[(size_t)id - (size_t)KEY_BEARER_OLLAMA],
                               AI_CONFIG_BEARER_TOKEN_CAPACITY, value);
+        case KEY_HOST_OLLAMA:
+            if (*value == '\0') {
+                return fail(parser, AI_CONFIG_INVALID_VALUE, id);
+            }
+            return copy_value(parser, id, config->ollama_host, sizeof(config->ollama_host), value);
+        case KEY_PORT_OLLAMA:
+            status = parse_u32(parser, id, value, 1u, 65535u, &number);
+            if (status == AI_CONFIG_OK) {
+                config->ollama_port = (uint16_t)number;
+            }
+            return status;
+        case KEY_MODEL_OLLAMA:
+            return copy_value(parser, id, config->ollama_model, sizeof(config->ollama_model), value);
+        case KEY_HOST_MUSE:
+            if (*value == '\0') {
+                return fail(parser, AI_CONFIG_INVALID_VALUE, id);
+            }
+            return copy_value(parser, id, config->muse_host, sizeof(config->muse_host), value);
         case KEY_CONNECT_TIMEOUT:
             return parse_u32(parser, id, value, AI_CONFIG_CONNECT_TIMEOUT_MS_MIN,
                              AI_CONFIG_CONNECT_TIMEOUT_MS_MAX, &config->connect_timeout_ms);
@@ -752,6 +803,49 @@ static size_t token_lines_length(const ai_config_t *config) {
     return total;
 }
 
+/* One remembered-endpoint line per provider that has one: the Ollama host,
+ * port and model, and the Muse bridge's host. */
+static size_t endpoint_lines_length(const ai_config_t *config) {
+    size_t total = 0u;
+
+    if (config->ollama_host[0] != '\0') {
+        total += sizeof("host_ollama=") - 1u + strlen(config->ollama_host) + 1u;
+        if (config->ollama_port != 0u) {
+            total += sizeof("port_ollama=") - 1u + decimal_length(config->ollama_port) + 1u;
+        }
+        if (config->ollama_model[0] != '\0') {
+            total += sizeof("model_ollama=") - 1u + strlen(config->ollama_model) + 1u;
+        }
+    }
+    if (config->muse_host[0] != '\0') {
+        total += sizeof("host_muse=") - 1u + strlen(config->muse_host) + 1u;
+    }
+    return total;
+}
+
+static void append_endpoint_lines(char *destination, size_t *offset, const ai_config_t *config) {
+    if (config->ollama_host[0] != '\0') {
+        append_text(destination, offset, "host_ollama=");
+        append_text(destination, offset, config->ollama_host);
+        destination[(*offset)++] = '\n';
+        if (config->ollama_port != 0u) {
+            append_text(destination, offset, "port_ollama=");
+            append_number(destination, offset, config->ollama_port);
+            destination[(*offset)++] = '\n';
+        }
+        if (config->ollama_model[0] != '\0') {
+            append_text(destination, offset, "model_ollama=");
+            append_text(destination, offset, config->ollama_model);
+            destination[(*offset)++] = '\n';
+        }
+    }
+    if (config->muse_host[0] != '\0') {
+        append_text(destination, offset, "host_muse=");
+        append_text(destination, offset, config->muse_host);
+        destination[(*offset)++] = '\n';
+    }
+}
+
 static void append_token_lines(char *destination, size_t *offset, const ai_config_t *config) {
     size_t slot;
 
@@ -781,6 +875,12 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
             *length = 0u;
             return AI_CONFIG_INVALID_VALUE;
         }
+    }
+    if (!serializable_text(config->ollama_host, sizeof(config->ollama_host), 1) ||
+        !serializable_text(config->ollama_model, sizeof(config->ollama_model), 1) ||
+        !serializable_text(config->muse_host, sizeof(config->muse_host), 1)) {
+        *length = 0u;
+        return AI_CONFIG_INVALID_VALUE;
     }
     if (config->version != AI_CONFIG_VERSION ||
         !serializable_text(config->ssid, sizeof(config->ssid), 1) ||
@@ -822,7 +922,8 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
                sizeof("system_prompt=\n") - 1u + strlen(config->system_prompt) +
                sizeof("temperature=\n") - 1u + decimal_length(config->temperature) +
                sizeof("utc_offset_minutes=\n") - 1u + (config->utc_offset_minutes < 0 ? 1u : 0u) +
-               decimal_length(magnitude_of(config->utc_offset_minutes)) + token_lines_length(config);
+               decimal_length(magnitude_of(config->utc_offset_minutes)) + token_lines_length(config) +
+               endpoint_lines_length(config);
     *length = required;
     if (destination == NULL || capacity <= required) {
         return AI_CONFIG_NO_SPACE;
@@ -855,6 +956,9 @@ ai_config_status_t ai_config_serialize(const ai_config_t *config, char *destinat
     /* Each provider's remembered key, so switching back never needs it retyped.
      * The single line above stays for firmware that predates these slots. */
     append_token_lines(destination, &offset, config);
+    /* Each provider's remembered endpoint, so switching back never means
+     * retyping the server address. */
+    append_endpoint_lines(destination, &offset, config);
     APPEND_NUMBER_FIELD("connect_timeout_ms", config->connect_timeout_ms);
     APPEND_NUMBER_FIELD("request_timeout_ms", config->request_timeout_ms);
     APPEND_NUMBER_FIELD("idle_timeout_ms", config->idle_timeout_ms);
