@@ -243,6 +243,49 @@ void draw_bitmap_spi(int x1, int y1, int width, int height, float scale, int fc,
     lcd_spi_raise_cs();
 }
 
+/*
+ * Write a block of RGB565 pixels with its top-left at (x, y): one address
+ * window for the whole block, then the pixels streamed a row at a time through
+ * a small fixed buffer, expanded to the panel's three bytes per pixel.  The
+ * block must lie wholly on the screen; *pixels is stride pixels per row.
+ */
+#define RGB565_BLIT_CHUNK 64
+
+void draw_rgb565_spi(int x, int y, int width, int height, const uint16_t *pixels, int stride) {
+    unsigned char row[RGB565_BLIT_CHUNK * 3];
+    int x_end, y_end;
+
+    if (pixels == NULL || width <= 0 || height <= 0 || stride <= 0) return;
+    x_end = x + width - 1;
+    y_end = y + height - 1;
+    if (x < 0 || y < 0 || x_end >= hres || y_end >= vres) return;
+
+    define_region_spi(x, y, x_end, y_end, 1);
+
+    for (int row_y = y; row_y <= y_end; row_y++) {
+        const uint16_t *src = pixels + (size_t)(row_y - y) * (size_t)stride;
+        int drawn = 0, total = x_end - x + 1;
+
+        while (drawn < total) {
+            int chunk = total - drawn;
+            if (chunk > RGB565_BLIT_CHUNK) chunk = RGB565_BLIT_CHUNK;
+            for (int i = 0; i < chunk; i++) {
+                uint16_t pixel = src[drawn + i];
+                unsigned int r = (unsigned int)((pixel >> 11) & 0x1Fu);
+                unsigned int g = (unsigned int)((pixel >> 5) & 0x3Fu);
+                unsigned int b = (unsigned int)(pixel & 0x1Fu);
+                row[i * 3 + 0] = (unsigned char)((r << 3) | (r >> 2));
+                row[i * 3 + 1] = (unsigned char)((g << 2) | (g >> 4));
+                row[i * 3 + 2] = (unsigned char)((b << 3) | (b >> 2));
+            }
+            hw_send_spi(row, chunk * 3);
+            drawn += chunk;
+        }
+    }
+    spi_finish(Pico_LCD_SPI_MOD);
+    lcd_spi_raise_cs();
+}
+
 void spi_draw_pixel(uint16_t x, uint16_t y, uint32_t color) {
     if (x >= hres || y >= vres) return;
     define_region_spi(x, y, x, y, 1);

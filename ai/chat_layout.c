@@ -1,5 +1,21 @@
 #include "ai/chat_layout.h"
 
+#include <string.h>
+
+#include "ai/ai_config.h"
+
+size_t chat_layout_transcript_columns(const char *provider, int avatar_available) {
+    if (avatar_available && provider != NULL && strcmp(provider, AI_CONFIG_PROVIDER_MUSE) == 0) {
+        return CHAT_LAYOUT_TEXT_COLUMNS - CHAT_LAYOUT_AVATAR_CELLS;
+    }
+    return CHAT_LAYOUT_TEXT_COLUMNS;
+}
+
+int chat_layout_avatar_refresh_due(unsigned long now_ms, unsigned long last_draw_ms) {
+    /* Unsigned subtraction keeps this correct across a wrap. */
+    return (now_ms - last_draw_ms) >= CHAT_LAYOUT_AVATAR_FRAME_MS ? 1 : 0;
+}
+
 size_t chat_layout_next_line(const char *text, size_t length, size_t offset, size_t columns,
                              size_t *line_length) {
     size_t limit;

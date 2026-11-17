@@ -64,6 +64,19 @@ void draw_rect_spi(int x1, int y1, int x2, int y2, int c) {
             if (col * 8 >= x1 && col * 8 <= x2 && r * 12 >= y1 && r * 12 <= y2) screen[r][col] = ' ';
 }
 
+/* The imported avatar renderer is stubbed out on the host: the blit only
+ * marks the cells it covers, so the tests can see where the avatar is. */
+void muse_pixel_render(const void *pose) { (void)pose; }
+void muse_pixel_scale(uint16_t *dst, int stride_px, int x0, int x1, int y0, int y1) {
+    (void)dst; (void)stride_px; (void)x0; (void)x1; (void)y0; (void)y1;
+}
+void draw_rgb565_spi(int x, int y, int width, int height, const uint16_t *pixels, int stride) {
+    (void)pixels; (void)stride;
+    for (int r = 0; r < SCREEN_ROWS; r++)
+        for (int col = 0; col < SCREEN_COLS; col++)
+            if (col * 8 >= x && col * 8 < x + width && r * 12 >= y && r * 12 < y + height) screen[r][col] = '@';
+}
+
 /* Cursor text (the calculator's) is kept as a log rather than placed. */
 void lcd_print_string(char *s) {
     size_t used = strlen(printed);
@@ -596,6 +609,31 @@ static void check_muse_provider_setup(void) {
     CHECK_STR_EQ(configured.model, "muse");
 }
 
+/* The avatar narrows the transcript to 30 columns, so the right-hand strip
+ * below its 64x64 square is painted by nothing but the avatar itself.  The
+ * F5 menu draws across it; closing the menu must wipe it again, or the
+ * menu's borders and text stay on screen under the avatar. */
+static void check_avatar_strip_cleared_after_menu(void) {
+    /* Provider muse is already in force from check_muse_provider_setup. */
+    CHECK_STR_EQ(configured.provider, "muse");
+
+    script_begin();
+    press(KEY_ESC);               /* open the F5 menu, close it at once */
+    chat_mode_handle_input(KEY_F5);
+
+    CHECK(script_consumed());
+    /* The menu drew across the strip; the redraw after it closed must have
+     * wiped the strip below the avatar... */
+    for (int r = 7; r < 23; r++)
+        for (int c = 32; c < 40; c++)
+            CHECK(screen[r][c] == ' ');
+    /* ...and repainted the avatar square itself, so this is not passing
+     * because the avatar was never shown. */
+    for (int r = 1; r < 7; r++)
+        for (int c = 32; c < 40; c++)
+            CHECK(screen[r][c] == '@');
+}
+
 void test_mode_menu(void) {
     ui_init();
     chat_mode_init();
@@ -612,4 +650,5 @@ void test_mode_menu(void) {
     check_deepseek_setup();
     check_usb_disk_row();
     check_muse_provider_setup();
+    check_avatar_strip_cleared_after_menu();
 }
