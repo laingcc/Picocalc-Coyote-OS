@@ -210,11 +210,22 @@ static void draw_composer(void) {
     composer_dirty = false;
 }
 
+/* The avatar occupies the right-hand cells of the transcript, but only its
+ * 64x64 square is ever repainted: the strip below it is touched by neither
+ * the transcript nor the avatar.  Menus draw across it, so a full redraw
+ * must wipe it first or a closed menu's borders and text stay on screen. */
+static void clear_avatar_strip(void) {
+    if (!avatar_shown()) return;
+    draw_rect_spi(LCD_WIDTH - MUSE_AVATAR_SIZE, TRANSCRIPT_ROW * ROW_H + MUSE_AVATAR_SIZE,
+                  LCD_WIDTH - 1, (TRANSCRIPT_ROW + TRANSCRIPT_ROWS) * ROW_H - 1, BLACK);
+}
+
 void chat_mode_redraw(void) {
     sync_with_transport();
     draw_status(true);
     draw_transcript();
     draw_composer();
+    clear_avatar_strip();
     draw_avatar(true);
     draw_rect_spi(0, (COMPOSER_ROW + COMPOSER_ROWS) * ROW_H, LCD_WIDTH - 1, LCD_HEIGHT - 1, WHITE);
 }

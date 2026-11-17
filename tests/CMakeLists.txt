@@ -67,6 +67,11 @@ add_library(coyote_ui STATIC
 )
 set_source_files_properties("${COYOTE_ROOT}/UI/chat_mode.c" PROPERTIES
     COMPILE_DEFINITIONS "config_store_load=chat_mode_test_load;config_store_save=chat_mode_test_save")
+# The host tests drive the avatar path too: pretend an avatar renderer was
+# compiled in, as the firmware does when avatars/muse_pixel.c is present.
+# The renderer itself is stubbed out in test_mode_menu.c.
+set_source_files_properties("${COYOTE_ROOT}/UI/muse_avatar.c" PROPERTIES
+    COMPILE_DEFINITIONS "COYOTE_MUSE_AVATAR=1")
 target_include_directories(coyote_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/fakes" "${COYOTE_ROOT}")
 target_link_libraries(coyote_ui PUBLIC coyote_ai m)
 
