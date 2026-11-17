@@ -6,14 +6,21 @@
  * self-signed roots are listed, never a leaf or an intermediate, and only the
  * ones those hosts chain to:
  *
- *   api.deepseek.com                    leaf <- Amazon RSA 2048 M01 <- Amazon Root CA 1
+ *   api.deepseek.com                    leaf <- Amazon RSA 2048 S24 <- Amazon Root CA 1
  *   api.openai.com                      leaf <- GTS WE1 <- GTS Root R4
  *   api.mistral.ai                      leaf <- GTS WE1 <- GTS Root R4
  *   api.anthropic.com                   leaf <- GTS WE1 <- GTS Root R4
- *   generativelanguage.googleapis.com   leaf <- GTS WR2 <- GTS Root R1
+ *   generativelanguage.googleapis.com   leaf <- GTS WE2 <- GTS Root R4
  *
- * (chains as served on 2026-10-12; the two Google Trust Services roots were
- * also compared, by SHA-256, with the copies Google publishes at pki.goog).
+ * (chains as served on 2026-11-16, re-checked against the live hosts; the
+ * two Google Trust Services roots were also compared, by SHA-256, with the
+ * copies Google publishes at pki.goog).  The providers rotate their
+ * intermediates, so the names above will drift; what matters is the root
+ * each chain ends at, and that root is in this list.  DeepSeek and Google
+ * also serve a cross-signed copy of their root (Amazon Root CA 1 signed by
+ * Starfield G2, GTS Root R4 signed by GlobalSign Root CA); the cross-signed
+ * copy is not needed, because verification stops at the self-signed root
+ * itself, whose key signs the intermediate.
  * For Amazon Trust Services the set is all five of its roots: the one in use
  * plus the ones Amazon documents it may issue from.  For Google Trust
  * Services it is the two roots in use.  The servers also send a cross-signed
