@@ -152,6 +152,17 @@ static void check_maximum_size_round_trip(void) {
     memset(saved.bearer_token, 't', sizeof(saved.bearer_token) - 1u);
     memset(saved.tokens[ai_config_token_slot(saved.provider)], 't',
            sizeof(saved.tokens[0]) - 1u);
+    /* Every provider's key at full length: the old save buffer held one
+     * key's worth and refused to write the rest to the card.  The fill
+     * chars differ per field so the remembered endpoints are not equal to
+     * the live ones and are written out too. */
+    for (size_t slot = 0u; slot < AI_CONFIG_TOKEN_SLOTS; slot++) {
+        memset(saved.tokens[slot], 't', sizeof(saved.tokens[0]) - 1u);
+    }
+    memset(saved.ollama_host, 'o', sizeof(saved.ollama_host) - 1u);
+    memset(saved.ollama_model, 'n', sizeof(saved.ollama_model) - 1u);
+    memset(saved.muse_host, 'u', sizeof(saved.muse_host) - 1u);
+    saved.ollama_port = 8080u;
     saved.port = 65535u;
     saved.connect_timeout_ms = AI_CONFIG_CONNECT_TIMEOUT_MS_MAX;
     saved.request_timeout_ms = AI_CONFIG_REQUEST_TIMEOUT_MS_MAX;
